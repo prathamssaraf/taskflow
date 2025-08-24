@@ -23,6 +23,8 @@ import {
   Calendar as CalendarIcon,
   Check,
   Save,
+  Camera,
+  Upload,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -31,11 +33,38 @@ function clsx(...xs) {
   return xs.filter(Boolean).join(" ");
 }
 
-function Avatar({ name, size = 40 }) {
+function Avatar({ name, profilePicture, size = 40 }) {
   const initials = useMemo(() => {
     const parts = name.split(" ");
     return (parts[0]?.[0] || "").toUpperCase() + (parts[1]?.[0] || "").toUpperCase();
   }, [name]);
+
+  if (profilePicture) {
+    return (
+      <div
+        className="rounded-full bg-gray-200 overflow-hidden border-2 border-white shadow-sm"
+        style={{ width: size, height: size }}
+        aria-label={name}
+        title={name}
+      >
+        <img 
+          src={profilePicture} 
+          alt={name}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // Fallback to initials if image fails to load
+            e.target.style.display = 'none';
+            e.target.parentNode.innerHTML = `
+              <div class="w-full h-full flex items-center justify-center font-semibold text-white" style="background: linear-gradient(135deg,#ff9f69,#f56d6d)">
+                ${initials}
+              </div>
+            `;
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex items-center justify-center rounded-full font-semibold text-white"
@@ -450,8 +479,30 @@ function TaskList({ tasks, onToggle, onDelete }) {
 }
 
 // ---------- Right Panel (Profile + Calendar + Agenda) ----------
-function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName }) {
+function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName, profilePicture, setProfilePicture }) {
   const [openProfile, setOpenProfile] = useState(false);
+  
+  // Handle file upload
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setProfilePicture(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  
+  // Preset avatars
+  const presetAvatars = [
+    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face&auto=format",
+    "https://images.unsplash.com/photo-1494790108755-2616b612b5bc?w=150&h=150&fit=crop&crop=face&auto=format", 
+    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face&auto=format",
+    "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face&auto=format",
+    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face&auto=format",
+    "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=face&auto=format"
+  ];
 
   return (
     <aside className="w-[340px] shrink-0 pl-6">
@@ -460,7 +511,7 @@ function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName }) {
           <div className="w-24 h-24 rounded-full bg-emerald-300" />
         </div>
         <div className="flex items-center gap-4">
-          <Avatar name={name} size={64} />
+          <Avatar name={name} profilePicture={profilePicture} size={64} />
           <div>
             <div className="text-lg font-semibold text-slate-800">{name}</div>
             <div className="text-xs text-slate-400">Planner</div>
@@ -523,10 +574,81 @@ function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName }) {
       </div>
 
       <Modal open={openProfile} onClose={() => setOpenProfile(false)} title="Edit Profile">
-        <label className="text-sm text-slate-600">Display name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded-xl bg-white ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400"/>
-        <div className="mt-4 text-right">
-          <button onClick={() => setOpenProfile(false)} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white">Save</button>
+        <div className="space-y-4">
+          {/* Profile Picture Section */}
+          <div>
+            <label className="text-sm text-slate-600 font-medium">Profile Picture</label>
+            <div className="mt-2 flex items-center gap-4">
+              <Avatar name={name} profilePicture={profilePicture} size={80} />
+              <div className="flex-1 space-y-2">
+                <div className="flex gap-2">
+                  <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer text-xs font-medium">
+                    <Camera className="w-4 h-4" />
+                    Upload Photo
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  {profilePicture && (
+                    <button 
+                      onClick={() => setProfilePicture("")}
+                      className="px-3 py-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-medium"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Preset Avatars */}
+            <div className="mt-3">
+              <div className="text-xs text-slate-500 mb-2">Or choose a preset:</div>
+              <div className="grid grid-cols-6 gap-2">
+                {presetAvatars.map((avatar, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setProfilePicture(avatar)}
+                    className={clsx(
+                      "w-12 h-12 rounded-full overflow-hidden border-2 hover:scale-105 transition-transform",
+                      profilePicture === avatar ? "border-amber-400 ring-2 ring-amber-200" : "border-gray-200"
+                    )}
+                  >
+                    <img src={avatar} alt={`Preset ${index + 1}`} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* Name Section */}
+          <div>
+            <label className="text-sm text-slate-600 font-medium">Display name</label>
+            <input 
+              value={name} 
+              onChange={(e) => setName(e.target.value)} 
+              className="mt-1 w-full rounded-xl bg-white ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400"
+              placeholder="Enter your name"
+            />
+          </div>
+        </div>
+        
+        <div className="mt-6 flex justify-end gap-2">
+          <button 
+            onClick={() => setOpenProfile(false)} 
+            className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => setOpenProfile(false)} 
+            className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:brightness-105"
+          >
+            Save Changes
+          </button>
         </div>
       </Modal>
     </aside>
@@ -559,6 +681,15 @@ export default function DailyTasksDashboard() {
       return "Christian Pulisic";
     }
   });
+  const [profilePicture, setProfilePicture] = useState(() => {
+    try {
+      const saved = localStorage.getItem("taskflow.profilePicture");
+      return saved || "";
+    } catch (error) {
+      console.error("Error loading profile picture:", error);
+      return "";
+    }
+  });
 
   useEffect(() => {
     if (tasks.length === 0) return; // Don't show saving indicator on initial load
@@ -587,6 +718,15 @@ export default function DailyTasksDashboard() {
       console.error("Error saving username:", error);
     }
   }, [name]);
+
+  // Save profile picture to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("taskflow.profilePicture", profilePicture);
+    } catch (error) {
+      console.error("Error saving profile picture:", error);
+    }
+  }, [profilePicture]);
 
   // Helper functions for recurring tasks
   const getDayOfWeek = (dateString) => {
@@ -916,7 +1056,7 @@ export default function DailyTasksDashboard() {
           </main>
 
           {/* Right panel */}
-          <RightPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} agenda={agenda} name={name} setName={setName} />
+          <RightPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} agenda={agenda} name={name} setName={setName} profilePicture={profilePicture} setProfilePicture={setProfilePicture} />
         </div>
       </div>
 
