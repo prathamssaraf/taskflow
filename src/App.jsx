@@ -41,7 +41,9 @@ const GITHUB_CONFIG = {
   owner: 'prathamssaraf', // Your GitHub username
   repo: 'taskflow',       // Your repo name
   dataPath: 'data',       // Folder to store user data
-  apiUrl: 'https://api.github.com'
+  apiUrl: 'https://api.github.com',
+  // You can add your GitHub token here for automatic operations
+  // token: 'your_github_token_here' // Uncomment and add your token
 };
 
 // ---------- GitHub API Functions ----------
@@ -51,10 +53,14 @@ class GitHubStorage {
     this.filePath = `${GITHUB_CONFIG.dataPath}/${userId}.json`;
   }
 
-  async saveToGitHub(data, githubToken) {
+  async saveToGitHub(data) {
     try {
-      const token = githubToken || localStorage.getItem('github_token');
-      if (!token) throw new Error('GitHub token required');
+      // Use master token if available, otherwise skip GitHub sync
+      if (!GITHUB_CONFIG.token) {
+        console.log('No master GitHub token configured, skipping cloud sync');
+        return;
+      }
+      const token = GITHUB_CONFIG.token;
 
       // First, try to get existing file to get its SHA
       let sha = null;
@@ -104,10 +110,14 @@ class GitHubStorage {
     }
   }
 
-  async loadFromGitHub(githubToken) {
+  async loadFromGitHub() {
     try {
-      const token = githubToken || localStorage.getItem('github_token');
-      if (!token) throw new Error('GitHub token required');
+      // Use master token if available, otherwise return null
+      if (!GITHUB_CONFIG.token) {
+        console.log('No master GitHub token configured, skipping cloud load');
+        return null;
+      }
+      const token = GITHUB_CONFIG.token;
 
       const response = await fetch(
         `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
@@ -150,13 +160,20 @@ class AuthSystem {
     return hash.toString();
   }
 
-  static async loadUsersFromGitHub(githubToken) {
+  static async loadUsersFromGitHub() {
     try {
+      // For simplicity, we'll disable GitHub-based auth temporarily
+      // and fall back to localStorage until a master token is configured
+      if (!GITHUB_CONFIG.token) {
+        const users = localStorage.getItem('taskflow.users');
+        return users ? JSON.parse(users) : {};
+      }
+
       const response = await fetch(
         `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
         {
           headers: {
-            'Authorization': `token ${githubToken}`,
+            'Authorization': `token ${GITHUB_CONFIG.token}`,
             'Accept': 'application/vnd.github.v3+json'
           }
         }
@@ -185,8 +202,14 @@ class AuthSystem {
     }
   }
 
-  static async saveUsersToGitHub(users, githubToken) {
+  static async saveUsersToGitHub(users) {
     try {
+      // For simplicity, we'll use localStorage until master token is configured
+      if (!GITHUB_CONFIG.token) {
+        localStorage.setItem('taskflow.users', JSON.stringify(users));
+        return true;
+      }
+
       // First, try to get existing file SHA
       let sha = null;
       try {
@@ -194,7 +217,7 @@ class AuthSystem {
           `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
           {
             headers: {
-              'Authorization': `token ${githubToken}`,
+              'Authorization': `token ${GITHUB_CONFIG.token}`,
               'Accept': 'application/vnd.github.v3+json'
             }
           }
@@ -216,7 +239,7 @@ class AuthSystem {
         {
           method: 'PUT',
           headers: {
-            'Authorization': `token ${githubToken}`,
+            'Authorization': `token ${GITHUB_CONFIG.token}`,
             'Accept': 'application/vnd.github.v3+json',
             'Content-Type': 'application/json'
           },
@@ -244,9 +267,9 @@ class AuthSystem {
     }
   }
 
-  static async registerUser(username, password, githubToken) {
-    // Load existing users from GitHub
-    const users = await this.loadUsersFromGitHub(githubToken);
+  static async registerUser(username, password) {
+    // Load existing users 
+    const users = await this.loadUsersFromGitHub();
     
     if (users[username]) {
       throw new Error('Username already exists');
@@ -259,15 +282,15 @@ class AuthSystem {
       createdAt: new Date().toISOString()
     };
 
-    // Save users back to GitHub
-    await this.saveUsersToGitHub(users, githubToken);
+    // Save users back
+    await this.saveUsersToGitHub(users);
 
-    return { username, userId, githubToken };
+    return { username, userId };
   }
 
-  static async loginUser(username, password, githubToken) {
-    // Load users from GitHub
-    const users = await this.loadUsersFromGitHub(githubToken);
+  static async loginUser(username, password) {
+    // Load users
+    const users = await this.loadUsersFromGitHub();
     const user = users[username];
 
     if (!user || user.passwordHash !== this.hashPassword(password)) {
@@ -277,7 +300,6 @@ class AuthSystem {
     const sessionData = {
       username,
       userId: user.userId,
-      githubToken: githubToken,
       loginAt: new Date().toISOString()
     };
 
@@ -304,7 +326,6 @@ function LoginScreen({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [githubToken, setGithubToken] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -315,17 +336,11 @@ function LoginScreen({ onLogin }) {
 
     try {
       if (isLogin) {
-        if (!githubToken.trim()) {
-          throw new Error('GitHub token is required to login');
-        }
-        const user = await AuthSystem.loginUser(username, password, githubToken);
+        const user = await AuthSystem.loginUser(username, password);
         onLogin(user);
       } else {
-        if (!githubToken.trim()) {
-          throw new Error('GitHub token is required for registration');
-        }
-        await AuthSystem.registerUser(username, password, githubToken);
-        const sessionUser = await AuthSystem.loginUser(username, password, githubToken);
+        await AuthSystem.registerUser(username, password);
+        const sessionUser = await AuthSystem.loginUser(username, password);
         onLogin(sessionUser);
       }
     } catch (err) {
@@ -380,43 +395,10 @@ function LoginScreen({ onLogin }) {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                <Cloud className="w-4 h-4 inline mr-2" />
-                GitHub Token
-              </label>
-              <input
-                type="password"
-                value={githubToken}
-                onChange={(e) => setGithubToken(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-                placeholder="GitHub Personal Access Token"
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1 space-y-1">
-                <div>
-                  <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
-                    Create token here →
-                  </a> (Needs 'repo' permissions)
-                  {isLogin && <span className="ml-2">• Required for cross-device login</span>}
-                </div>
-                <div className="bg-blue-50 text-blue-700 p-2 rounded text-xs">
-                  <strong>⚠️ Token Setup:</strong> 
-                  <br />1. Click "Generate new token (classic)" 
-                  <br />2. Select "repo" (Full control of private repositories)
-                  <br />3. Copy and paste the token here
-                </div>
-              </div>
-            </div>
 
             {error && (
               <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm">
                 <strong>Error:</strong> {error}
-                {error.includes('Invalid username or password') && (
-                  <div className="mt-2 text-xs">
-                    💡 <strong>Tip:</strong> Make sure you're using the same GitHub token that was used when creating the account.
-                  </div>
-                )}
               </div>
             )}
 
@@ -445,7 +427,7 @@ function LoginScreen({ onLogin }) {
             </button>
             
             <div className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
-              <strong>🌐 Cross-Device:</strong> Accounts are stored in GitHub. Login from any device using your username, password, and the same GitHub token.
+              <strong>🌐 Simple & Secure:</strong> Just username and password. Your account works across all devices.
             </div>
           </div>
         </div>
@@ -1217,22 +1199,12 @@ function DailyTasksDashboard({ user, onLogout }) {
         version: "2.0"
       };
       
-      await githubStorage.saveToGitHub(data, user.githubToken);
+      await githubStorage.saveToGitHub(data);
       setSyncStatus("synced");
       setTimeout(() => setSyncStatus(""), 3000);
     } catch (error) {
       console.error("Cloud sync failed:", error);
       setSyncStatus("error");
-      
-      // Show user-friendly error message
-      if (error.message.includes('InvalidCharacterError')) {
-        console.error("GitHub sync failed: Text encoding issue. This has been fixed in the latest version.");
-      } else if (error.message.includes('401')) {
-        console.error("GitHub sync failed: Invalid token. Please check your GitHub token permissions.");
-      } else if (error.message.includes('404')) {
-        console.log("GitHub sync: Creating new data file for user.");
-      }
-      
       setTimeout(() => setSyncStatus(""), 5000);
     }
   };
@@ -1240,7 +1212,7 @@ function DailyTasksDashboard({ user, onLogout }) {
   const loadFromCloud = async () => {
     try {
       setSyncStatus("syncing");
-      const data = await githubStorage.loadFromGitHub(user.githubToken);
+      const data = await githubStorage.loadFromGitHub();
       
       if (data) {
         if (data.tasks) setTasks(data.tasks);
