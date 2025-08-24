@@ -1,6 +1,9 @@
 import { useState } from "react";
 
+console.log('📦 App component loading...')
+
 function App() {
+  console.log('🎨 App component rendering...')
   const [count, setCount] = useState(0);
 
   return (
