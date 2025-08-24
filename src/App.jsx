@@ -150,8 +150,88 @@ class AuthSystem {
     return hash.toString();
   }
 
+  static async loadUsersFromGitHub(githubToken) {
+    try {
+      const response = await fetch(
+        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
+        {
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        }
+      );
+
+      if (response.ok) {
+        const fileInfo = await response.json();
+        const content = decodeURIComponent(escape(atob(fileInfo.content)));
+        return JSON.parse(content);
+      } else if (response.status === 404) {
+        // Users file doesn't exist yet
+        return {};
+      } else {
+        throw new Error(`GitHub API error: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Error loading users from GitHub:', error);
+      return {};
+    }
+  }
+
+  static async saveUsersToGitHub(users, githubToken) {
+    try {
+      // First, try to get existing file SHA
+      let sha = null;
+      try {
+        const getResponse = await fetch(
+          `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
+          {
+            headers: {
+              'Authorization': `token ${githubToken}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          }
+        );
+        if (getResponse.ok) {
+          const fileInfo = await getResponse.json();
+          sha = fileInfo.sha;
+        }
+      } catch (e) {
+        console.log('Users file does not exist yet, creating new...');
+      }
+
+      // Create or update users file
+      const jsonString = JSON.stringify(users, null, 2);
+      const content = btoa(unescape(encodeURIComponent(jsonString)));
+      
+      const response = await fetch(
+        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: `Update user accounts`,
+            content: content,
+            ...(sha && { sha })
+          })
+        }
+      );
+
+      if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+      return true;
+    } catch (error) {
+      console.error('Error saving users to GitHub:', error);
+      throw error;
+    }
+  }
+
   static async registerUser(username, password, githubToken) {
-    const users = JSON.parse(localStorage.getItem('taskflow.users') || '{}');
+    // Load existing users from GitHub
+    const users = await this.loadUsersFromGitHub(githubToken);
     
     if (users[username]) {
       throw new Error('Username already exists');
@@ -161,16 +241,18 @@ class AuthSystem {
     users[username] = {
       userId,
       passwordHash: this.hashPassword(password),
-      githubToken,
       createdAt: new Date().toISOString()
     };
 
-    localStorage.setItem('taskflow.users', JSON.stringify(users));
+    // Save users back to GitHub
+    await this.saveUsersToGitHub(users, githubToken);
+
     return { username, userId, githubToken };
   }
 
-  static async loginUser(username, password) {
-    const users = JSON.parse(localStorage.getItem('taskflow.users') || '{}');
+  static async loginUser(username, password, githubToken) {
+    // Load users from GitHub
+    const users = await this.loadUsersFromGitHub(githubToken);
     const user = users[username];
 
     if (!user || user.passwordHash !== this.hashPassword(password)) {
@@ -180,7 +262,7 @@ class AuthSystem {
     const sessionData = {
       username,
       userId: user.userId,
-      githubToken: user.githubToken,
+      githubToken: githubToken,
       loginAt: new Date().toISOString()
     };
 
@@ -218,15 +300,17 @@ function LoginScreen({ onLogin }) {
 
     try {
       if (isLogin) {
-        const user = await AuthSystem.loginUser(username, password);
+        if (!githubToken.trim()) {
+          throw new Error('GitHub token is required to login');
+        }
+        const user = await AuthSystem.loginUser(username, password, githubToken);
         onLogin(user);
       } else {
         if (!githubToken.trim()) {
           throw new Error('GitHub token is required for registration');
         }
-        const user = await AuthSystem.registerUser(username, password, githubToken);
-        await AuthSystem.loginUser(username, password);
-        const sessionUser = await AuthSystem.loginUser(username, password);
+        await AuthSystem.registerUser(username, password, githubToken);
+        const sessionUser = await AuthSystem.loginUser(username, password, githubToken);
         onLogin(sessionUser);
       }
     } catch (err) {
@@ -281,34 +365,33 @@ function LoginScreen({ onLogin }) {
               />
             </div>
 
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  <Cloud className="w-4 h-4 inline mr-2" />
-                  GitHub Token
-                </label>
-                <input
-                  type="password"
-                  value={githubToken}
-                  onChange={(e) => setGithubToken(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
-                  placeholder="GitHub Personal Access Token"
-                  required={!isLogin}
-                />
-                <p className="text-xs text-slate-500 mt-1">
-                  <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
-                    Create token here →
-                  </a> (Needs 'repo' permissions)
-                </p>
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                <Cloud className="w-4 h-4 inline mr-2" />
+                GitHub Token
+              </label>
+              <input
+                type="password"
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                placeholder="GitHub Personal Access Token"
+                required
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
+                  Create token here →
+                </a> (Needs 'repo' permissions)
+                {isLogin && <span className="ml-2">• Required for cross-device login</span>}
+              </p>
+            </div>
 
             {error && (
               <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm">
                 <strong>Error:</strong> {error}
                 {error.includes('Invalid username or password') && (
                   <div className="mt-2 text-xs">
-                    💡 <strong>Tip:</strong> Accounts are browser-specific. In incognito mode, you'll need to create a new account.
+                    💡 <strong>Tip:</strong> Make sure you're using the same GitHub token that was used when creating the account.
                   </div>
                 )}
               </div>
@@ -339,7 +422,7 @@ function LoginScreen({ onLogin }) {
             </button>
             
             <div className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
-              <strong>📱 Note:</strong> Accounts are stored locally in your browser. Use the same browser to access your account, or create a new account in incognito/different browsers.
+              <strong>🌐 Cross-Device:</strong> Accounts are stored in GitHub. Login from any device using your username, password, and the same GitHub token.
             </div>
           </div>
         </div>
