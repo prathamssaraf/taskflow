@@ -223,7 +223,7 @@ function TaskForm({ onAdd }) {
         <option value="medium">Medium</option>
         <option value="high">High</option>
       </select>
-      <button className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-2 text-sm font-medium text-white shadow hover:brightness-105">
+      <button type="submit" className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-2 text-sm font-medium text-white shadow hover:brightness-105">
         <Plus className="w-4 h-4"/> Add
       </button>
     </form>
