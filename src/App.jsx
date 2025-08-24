@@ -20,7 +20,7 @@ import {
   Clock,
   Plus,
   Repeat,
-  Calendar,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
