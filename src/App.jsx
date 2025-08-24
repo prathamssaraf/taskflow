@@ -30,6 +30,9 @@ import {
   Cloud,
   CloudOff,
   Wifi,
+  User,
+  Lock,
+  UserPlus,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -48,9 +51,9 @@ class GitHubStorage {
     this.filePath = `${GITHUB_CONFIG.dataPath}/${userId}.json`;
   }
 
-  async saveToGitHub(data) {
+  async saveToGitHub(data, githubToken) {
     try {
-      const token = localStorage.getItem('github_token');
+      const token = githubToken || localStorage.getItem('github_token');
       if (!token) throw new Error('GitHub token required');
 
       // First, try to get existing file to get its SHA
@@ -100,9 +103,9 @@ class GitHubStorage {
     }
   }
 
-  async loadFromGitHub() {
+  async loadFromGitHub(githubToken) {
     try {
-      const token = localStorage.getItem('github_token');
+      const token = githubToken || localStorage.getItem('github_token');
       if (!token) throw new Error('GitHub token required');
 
       const response = await fetch(
@@ -131,6 +134,208 @@ class GitHubStorage {
       return null;
     }
   }
+}
+
+// ---------- Authentication System ----------
+class AuthSystem {
+  static hashPassword(password) {
+    // Simple hash for demo - in production use proper bcrypt
+    let hash = 0;
+    for (let i = 0; i < password.length; i++) {
+      const char = password.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return hash.toString();
+  }
+
+  static async registerUser(username, password, githubToken) {
+    const users = JSON.parse(localStorage.getItem('taskflow.users') || '{}');
+    
+    if (users[username]) {
+      throw new Error('Username already exists');
+    }
+
+    const userId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    users[username] = {
+      userId,
+      passwordHash: this.hashPassword(password),
+      githubToken,
+      createdAt: new Date().toISOString()
+    };
+
+    localStorage.setItem('taskflow.users', JSON.stringify(users));
+    return { username, userId, githubToken };
+  }
+
+  static async loginUser(username, password) {
+    const users = JSON.parse(localStorage.getItem('taskflow.users') || '{}');
+    const user = users[username];
+
+    if (!user || user.passwordHash !== this.hashPassword(password)) {
+      throw new Error('Invalid username or password');
+    }
+
+    const sessionData = {
+      username,
+      userId: user.userId,
+      githubToken: user.githubToken,
+      loginAt: new Date().toISOString()
+    };
+
+    localStorage.setItem('taskflow.session', JSON.stringify(sessionData));
+    return sessionData;
+  }
+
+  static getCurrentUser() {
+    try {
+      const session = localStorage.getItem('taskflow.session');
+      return session ? JSON.parse(session) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  static logout() {
+    localStorage.removeItem('taskflow.session');
+  }
+}
+
+// ---------- Login Component ----------
+function LoginScreen({ onLogin }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      if (isLogin) {
+        const user = await AuthSystem.loginUser(username, password);
+        onLogin(user);
+      } else {
+        if (!githubToken.trim()) {
+          throw new Error('GitHub token is required for registration');
+        }
+        const user = await AuthSystem.registerUser(username, password, githubToken);
+        await AuthSystem.loginUser(username, password);
+        const sessionUser = await AuthSystem.loginUser(username, password);
+        onLogin(sessionUser);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-3xl shadow-2xl p-8 ring-1 ring-slate-100">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl mb-4">
+              <Target className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold text-slate-800">TaskFlow</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              {isLogin ? 'Welcome back!' : 'Create your account'}
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                <User className="w-4 h-4 inline mr-2" />
+                Username
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                placeholder="Enter your username"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                <Lock className="w-4 h-4 inline mr-2" />
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                placeholder="Enter your password"
+                required
+              />
+            </div>
+
+            {!isLogin && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  <Cloud className="w-4 h-4 inline mr-2" />
+                  GitHub Token
+                </label>
+                <input
+                  type="password"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                  placeholder="GitHub Personal Access Token"
+                  required={!isLogin}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
+                    Create token here →
+                  </a> (Needs 'repo' permissions)
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white font-medium py-3 px-4 rounded-xl hover:from-amber-600 hover:to-orange-600 focus:ring-2 focus:ring-amber-400 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <Save className="w-4 h-4 animate-spin" />
+              ) : isLogin ? (
+                <User className="w-4 h-4" />
+              ) : (
+                <UserPlus className="w-4 h-4" />
+              )}
+              {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => setIsLogin(!isLogin)}
+              className="text-sm text-slate-600 hover:text-amber-600"
+            >
+              {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---------- Helpers & UI primitives ----------
@@ -761,11 +966,51 @@ function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName, prof
 }
 
 // ---------- Main App ----------
-export default function DailyTasksDashboard() {
+export default function TaskFlowApp() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Check for existing session on load
+  useEffect(() => {
+    const currentUser = AuthSystem.getCurrentUser();
+    setUser(currentUser);
+    setLoading(false);
+  }, []);
+
+  const handleLogin = (userData) => {
+    setUser(userData);
+  };
+
+  const handleLogout = () => {
+    AuthSystem.logout();
+    setUser(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Save className="w-8 h-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  return <DailyTasksDashboard user={user} onLogout={handleLogout} />;
+}
+
+function DailyTasksDashboard({ user, onLogout }) {
+  // User-specific data keys
+  const userTasksKey = `taskflow.tasks.${user.userId}`;
+  const userNameKey = `taskflow.name.${user.userId}`;
+  const userPictureKey = `taskflow.picture.${user.userId}`;
+
   const [tasks, setTasks] = useState(() => {
     try {
-      const saved = localStorage.getItem("taskflow.tasks");
-      console.log("Loading tasks from localStorage:", saved ? "found data" : "no data");
+      const saved = localStorage.getItem(userTasksKey);
+      console.log("Loading tasks for user:", user.username, saved ? "found data" : "no data");
       return saved ? JSON.parse(saved) : defaultTasks;
     } catch (error) {
       console.error("Error loading tasks from localStorage:", error);
@@ -780,16 +1025,16 @@ export default function DailyTasksDashboard() {
   const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved"
   const [name, setName] = useState(() => {
     try {
-      const saved = localStorage.getItem("taskflow.username");
-      return saved || "Christian Pulisic";
+      const saved = localStorage.getItem(userNameKey);
+      return saved || user.username;
     } catch (error) {
       console.error("Error loading username:", error);
-      return "Christian Pulisic";
+      return user.username;
     }
   });
   const [profilePicture, setProfilePicture] = useState(() => {
     try {
-      const saved = localStorage.getItem("taskflow.profilePicture");
+      const saved = localStorage.getItem(userPictureKey);
       return saved || "";
     } catch (error) {
       console.error("Error loading profile picture:", error);
@@ -798,17 +1043,9 @@ export default function DailyTasksDashboard() {
   });
   
   // Cloud sync states
-  const [cloudSync, setCloudSync] = useState(false);
+  const [cloudSync, setCloudSync] = useState(true); // Auto-enable for logged-in users
   const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "error"
-  const [userId, setUserId] = useState(() => {
-    let id = localStorage.getItem('taskflow.userId');
-    if (!id) {
-      id = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      localStorage.setItem('taskflow.userId', id);
-    }
-    return id;
-  });
-  const [githubStorage] = useState(() => new GitHubStorage(userId));
+  const [githubStorage] = useState(() => new GitHubStorage(user.userId));
 
   useEffect(() => {
     // Don't save default tasks on first load
@@ -818,8 +1055,8 @@ export default function DailyTasksDashboard() {
     const saveTimer = setTimeout(() => {
       try {
         const dataToSave = JSON.stringify(tasks);
-        localStorage.setItem("taskflow.tasks", dataToSave);
-        console.log("Saved tasks to localStorage:", tasks.length, "tasks");
+        localStorage.setItem(userTasksKey, dataToSave);
+        console.log("Saved tasks for", user.username, ":", tasks.length, "tasks");
         setSaveStatus("saved");
         setTimeout(() => setSaveStatus(""), 2000);
       } catch (error) {
@@ -830,25 +1067,25 @@ export default function DailyTasksDashboard() {
     }, 300);
 
     return () => clearTimeout(saveTimer);
-  }, [tasks]);
+  }, [tasks, userTasksKey, user.username]);
 
   // Save name to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem("taskflow.username", name);
+      localStorage.setItem(userNameKey, name);
     } catch (error) {
       console.error("Error saving username:", error);
     }
-  }, [name]);
+  }, [name, userNameKey]);
 
   // Save profile picture to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem("taskflow.profilePicture", profilePicture);
+      localStorage.setItem(userPictureKey, profilePicture);
     } catch (error) {
       console.error("Error saving profile picture:", error);
     }
-  }, [profilePicture]);
+  }, [profilePicture, userPictureKey]);
 
   // Cloud sync functions
   const syncToCloud = async () => {
@@ -864,7 +1101,7 @@ export default function DailyTasksDashboard() {
         version: "2.0"
       };
       
-      await githubStorage.saveToGitHub(data);
+      await githubStorage.saveToGitHub(data, user.githubToken);
       setSyncStatus("synced");
       setTimeout(() => setSyncStatus(""), 3000);
     } catch (error) {
@@ -877,7 +1114,7 @@ export default function DailyTasksDashboard() {
   const loadFromCloud = async () => {
     try {
       setSyncStatus("syncing");
-      const data = await githubStorage.loadFromGitHub();
+      const data = await githubStorage.loadFromGitHub(user.githubToken);
       
       if (data) {
         if (data.tasks) setTasks(data.tasks);
@@ -1162,7 +1399,7 @@ export default function DailyTasksDashboard() {
               </button>
               <button onClick={() => setShowSettings(true)} title="Settings" className="text-slate-400 hover:text-slate-600"><Settings className="w-5 h-5" /></button>
               <div className="flex-1" />
-              <button onClick={() => alert("Logged out (demo)")} title="Logout" className="text-slate-300 hover:text-slate-500"><LogOut className="w-5 h-5" /></button>
+              <button onClick={onLogout} title="Logout" className="text-slate-300 hover:text-slate-500"><LogOut className="w-5 h-5" /></button>
             </div>
           </aside>
 
@@ -1172,7 +1409,7 @@ export default function DailyTasksDashboard() {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h1 className="text-xl font-semibold text-slate-800">Hello, {name.split(' ')[0]}! <span className="align-middle">👋</span></h1>
-                <p className="text-sm text-slate-400">Plan your day and track progress.</p>
+                <p className="text-sm text-slate-400">@{user.username} - Plan your day and track progress.</p>
               </div>
               <div className="flex items-center gap-3">
                 {(saveStatus || syncStatus) && (
@@ -1326,56 +1563,30 @@ export default function DailyTasksDashboard() {
                   type="checkbox" 
                   checked={cloudSync}
                   onChange={(e) => setCloudSync(e.target.checked)}
-                  disabled={!localStorage.getItem('github_token')}
                 />
                 Enable automatic cloud sync
               </label>
               
-              {!localStorage.getItem('github_token') && (
-                <div className="space-y-2">
-                  <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg">
-                    <strong>⚠️ Setup Required:</strong> Add your GitHub Personal Access Token to enable cloud sync
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      placeholder="GitHub Personal Access Token"
-                      className="flex-1 text-xs px-2 py-1.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-400"
-                      onBlur={(e) => {
-                        if (e.target.value) {
-                          localStorage.setItem('github_token', e.target.value);
-                          e.target.value = '';
-                          alert('GitHub token saved! You can now enable cloud sync.');
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    <a href="https://github.com/settings/tokens" target="_blank" className="text-blue-600 hover:underline">
-                      Create token here →
-                    </a> (Needs 'repo' permissions)
-                  </div>
-                </div>
-              )}
+              <div className="text-xs text-green-600 bg-green-50 p-2 rounded-lg">
+                <strong>✅ Connected:</strong> Using your GitHub token from registration
+              </div>
               
-              {localStorage.getItem('github_token') && (
-                <div className="flex gap-2">
-                  <button 
-                    onClick={loadFromCloud}
-                    className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
-                  >
-                    <Cloud className="w-4 h-4" />
-                    Load from Cloud
-                  </button>
-                  <button 
-                    onClick={syncToCloud}
-                    className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-sm font-medium"
-                  >
-                    <Wifi className="w-4 h-4" />
-                    Sync Now
-                  </button>
-                </div>
-              )}
+              <div className="flex gap-2">
+                <button 
+                  onClick={loadFromCloud}
+                  className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
+                >
+                  <Cloud className="w-4 h-4" />
+                  Load from Cloud
+                </button>
+                <button 
+                  onClick={syncToCloud}
+                  className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-sm font-medium"
+                >
+                  <Wifi className="w-4 h-4" />
+                  Sync Now
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1410,12 +1621,13 @@ export default function DailyTasksDashboard() {
 
           {/* Storage Info */}
           <div className="border-t pt-4">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2">Storage Info</h4>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Account Info</h4>
             <div className="text-xs text-slate-500 space-y-1">
+              <div>Username: @{user.username}</div>
+              <div>User ID: {user.userId}</div>
               <div>Tasks stored: {tasks.length}</div>
               <div>Profile name: {name}</div>
               <div>Profile picture: {profilePicture ? "Custom" : "Default"}</div>
-              <div>User ID: {userId}</div>
               <div>Local storage: ✓ Active</div>
               <div>Cloud sync: {cloudSync ? "✓ Enabled" : "✗ Disabled"}</div>
               {cloudSync && <div>GitHub repo: prathamssaraf/taskflow</div>}
