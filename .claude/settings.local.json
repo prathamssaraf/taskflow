@@ -13,7 +13,11 @@
       "Bash(npm install:*)",
       "Bash(npm run build:*)",
       "Bash(npm run preview:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "WebSearch",
+      "Bash(git fetch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []
