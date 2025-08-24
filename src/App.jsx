@@ -21,6 +21,8 @@ import {
   Plus,
   Repeat,
   Calendar as CalendarIcon,
+  Check,
+  Save,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -448,9 +450,8 @@ function TaskList({ tasks, onToggle, onDelete }) {
 }
 
 // ---------- Right Panel (Profile + Calendar + Agenda) ----------
-function RightPanel({ selectedDate, setSelectedDate, agenda }) {
+function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName }) {
   const [openProfile, setOpenProfile] = useState(false);
-  const [name, setName] = useState("Christian Pulisic");
 
   return (
     <aside className="w-[340px] shrink-0 pl-6">
@@ -548,14 +549,44 @@ export default function DailyTasksDashboard() {
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [showSettings, setShowSettings] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(""); // "", "saving", "saved"
+  const [name, setName] = useState(() => {
+    try {
+      const saved = localStorage.getItem("taskflow.username");
+      return saved || "Christian Pulisic";
+    } catch (error) {
+      console.error("Error loading username:", error);
+      return "Christian Pulisic";
+    }
+  });
 
   useEffect(() => {
-    try {
-      localStorage.setItem("tasks.v1", JSON.stringify(tasks));
-    } catch (error) {
-      console.error("Error saving to localStorage:", error);
-    }
+    if (tasks.length === 0) return; // Don't show saving indicator on initial load
+    
+    setSaveStatus("saving");
+    const saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem("tasks.v1", JSON.stringify(tasks));
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus(""), 2000); // Clear "saved" status after 2 seconds
+      } catch (error) {
+        console.error("Error saving to localStorage:", error);
+        setSaveStatus("error");
+        setTimeout(() => setSaveStatus(""), 3000);
+      }
+    }, 300); // Small delay to batch rapid changes
+
+    return () => clearTimeout(saveTimer);
   }, [tasks]);
+
+  // Save name to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("taskflow.username", name);
+    } catch (error) {
+      console.error("Error saving username:", error);
+    }
+  }, [name]);
 
   // Helper functions for recurring tasks
   const getDayOfWeek = (dateString) => {
@@ -779,10 +810,27 @@ export default function DailyTasksDashboard() {
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h1 className="text-xl font-semibold text-slate-800">Hello, Christian! <span className="align-middle">👋</span></h1>
+                <h1 className="text-xl font-semibold text-slate-800">Hello, {name.split(' ')[0]}! <span className="align-middle">👋</span></h1>
                 <p className="text-sm text-slate-400">Plan your day and track progress.</p>
               </div>
               <div className="flex items-center gap-3">
+                {saveStatus && (
+                  <div className={clsx(
+                    "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium",
+                    saveStatus === "saving" && "bg-blue-50 text-blue-600",
+                    saveStatus === "saved" && "bg-green-50 text-green-600",
+                    saveStatus === "error" && "bg-red-50 text-red-600"
+                  )}>
+                    {saveStatus === "saving" && <Save className="w-3 h-3 animate-spin" />}
+                    {saveStatus === "saved" && <Check className="w-3 h-3" />}
+                    {saveStatus === "error" && "⚠️"}
+                    <span>
+                      {saveStatus === "saving" && "Saving..."}
+                      {saveStatus === "saved" && "Saved"}
+                      {saveStatus === "error" && "Save failed"}
+                    </span>
+                  </div>
+                )}
                 <div className="relative">
                   <input
                     value={query}
@@ -868,7 +916,7 @@ export default function DailyTasksDashboard() {
           </main>
 
           {/* Right panel */}
-          <RightPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} agenda={agenda} />
+          <RightPanel selectedDate={selectedDate} setSelectedDate={setSelectedDate} agenda={agenda} name={name} setName={setName} />
         </div>
       </div>
 
