@@ -27,8 +27,111 @@ import {
   Upload,
   Download,
   FileText,
+  Cloud,
+  CloudOff,
+  Wifi,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+
+// ---------- GitHub API Configuration ----------
+const GITHUB_CONFIG = {
+  owner: 'prathamssaraf', // Your GitHub username
+  repo: 'taskflow',       // Your repo name
+  dataPath: 'data',       // Folder to store user data
+  apiUrl: 'https://api.github.com'
+};
+
+// ---------- GitHub API Functions ----------
+class GitHubStorage {
+  constructor(userId) {
+    this.userId = userId;
+    this.filePath = `${GITHUB_CONFIG.dataPath}/${userId}.json`;
+  }
+
+  async saveToGitHub(data) {
+    try {
+      const token = localStorage.getItem('github_token');
+      if (!token) throw new Error('GitHub token required');
+
+      // First, try to get existing file to get its SHA
+      let sha = null;
+      try {
+        const getResponse = await fetch(
+          `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
+          {
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          }
+        );
+        if (getResponse.ok) {
+          const fileInfo = await getResponse.json();
+          sha = fileInfo.sha;
+        }
+      } catch (e) {
+        console.log('File does not exist yet, creating new...');
+      }
+
+      // Create or update file
+      const content = btoa(JSON.stringify(data, null, 2));
+      const response = await fetch(
+        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: `Update TaskFlow data for ${this.userId}`,
+            content: content,
+            ...(sha && { sha })
+          })
+        }
+      );
+
+      if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.error('Error saving to GitHub:', error);
+      throw error;
+    }
+  }
+
+  async loadFromGitHub() {
+    try {
+      const token = localStorage.getItem('github_token');
+      if (!token) throw new Error('GitHub token required');
+
+      const response = await fetch(
+        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
+        {
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log('User data file not found, will create on first save');
+          return null;
+        }
+        throw new Error(`GitHub API error: ${response.status}`);
+      }
+
+      const fileInfo = await response.json();
+      const content = atob(fileInfo.content);
+      return JSON.parse(content);
+    } catch (error) {
+      console.error('Error loading from GitHub:', error);
+      return null;
+    }
+  }
+}
 
 // ---------- Helpers & UI primitives ----------
 function clsx(...xs) {
@@ -693,6 +796,19 @@ export default function DailyTasksDashboard() {
       return "";
     }
   });
+  
+  // Cloud sync states
+  const [cloudSync, setCloudSync] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "error"
+  const [userId, setUserId] = useState(() => {
+    let id = localStorage.getItem('taskflow.userId');
+    if (!id) {
+      id = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('taskflow.userId', id);
+    }
+    return id;
+  });
+  const [githubStorage] = useState(() => new GitHubStorage(userId));
 
   useEffect(() => {
     // Don't save default tasks on first load
@@ -733,6 +849,60 @@ export default function DailyTasksDashboard() {
       console.error("Error saving profile picture:", error);
     }
   }, [profilePicture]);
+
+  // Cloud sync functions
+  const syncToCloud = async () => {
+    if (!cloudSync) return;
+    
+    try {
+      setSyncStatus("syncing");
+      const data = {
+        tasks,
+        name,
+        profilePicture,
+        lastSync: new Date().toISOString(),
+        version: "2.0"
+      };
+      
+      await githubStorage.saveToGitHub(data);
+      setSyncStatus("synced");
+      setTimeout(() => setSyncStatus(""), 3000);
+    } catch (error) {
+      console.error("Cloud sync failed:", error);
+      setSyncStatus("error");
+      setTimeout(() => setSyncStatus(""), 5000);
+    }
+  };
+
+  const loadFromCloud = async () => {
+    try {
+      setSyncStatus("syncing");
+      const data = await githubStorage.loadFromGitHub();
+      
+      if (data) {
+        if (data.tasks) setTasks(data.tasks);
+        if (data.name) setName(data.name);
+        if (data.profilePicture) setProfilePicture(data.profilePicture);
+        setSyncStatus("synced");
+        setTimeout(() => setSyncStatus(""), 3000);
+      } else {
+        setSyncStatus("error");
+        setTimeout(() => setSyncStatus(""), 3000);
+      }
+    } catch (error) {
+      console.error("Cloud load failed:", error);
+      setSyncStatus("error");
+      setTimeout(() => setSyncStatus(""), 5000);
+    }
+  };
+
+  // Auto-sync when cloud sync is enabled
+  useEffect(() => {
+    if (cloudSync && tasks !== defaultTasks) {
+      const syncTimer = setTimeout(syncToCloud, 2000);
+      return () => clearTimeout(syncTimer);
+    }
+  }, [tasks, name, profilePicture, cloudSync]);
 
   // Data export/import functions
   const exportData = () => {
@@ -1005,20 +1175,27 @@ export default function DailyTasksDashboard() {
                 <p className="text-sm text-slate-400">Plan your day and track progress.</p>
               </div>
               <div className="flex items-center gap-3">
-                {saveStatus && (
+                {(saveStatus || syncStatus) && (
                   <div className={clsx(
                     "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium",
-                    saveStatus === "saving" && "bg-blue-50 text-blue-600",
-                    saveStatus === "saved" && "bg-green-50 text-green-600",
-                    saveStatus === "error" && "bg-red-50 text-red-600"
+                    (saveStatus === "saving" || syncStatus === "syncing") && "bg-blue-50 text-blue-600",
+                    (saveStatus === "saved" || syncStatus === "synced") && "bg-green-50 text-green-600",
+                    (saveStatus === "error" || syncStatus === "error") && "bg-red-50 text-red-600"
                   )}>
-                    {saveStatus === "saving" && <Save className="w-3 h-3 animate-spin" />}
-                    {saveStatus === "saved" && <Check className="w-3 h-3" />}
-                    {saveStatus === "error" && "⚠️"}
+                    {(saveStatus === "saving" || syncStatus === "syncing") && (
+                      syncStatus === "syncing" ? <Cloud className="w-3 h-3 animate-pulse" /> : <Save className="w-3 h-3 animate-spin" />
+                    )}
+                    {(saveStatus === "saved" || syncStatus === "synced") && (
+                      syncStatus === "synced" ? <Cloud className="w-3 h-3" /> : <Check className="w-3 h-3" />
+                    )}
+                    {(saveStatus === "error" || syncStatus === "error") && <CloudOff className="w-3 h-3" />}
                     <span>
-                      {saveStatus === "saving" && "Saving..."}
-                      {saveStatus === "saved" && "Saved"}
-                      {saveStatus === "error" && "Save failed"}
+                      {syncStatus === "syncing" && "Syncing to cloud..."}
+                      {syncStatus === "synced" && "Synced to cloud"}
+                      {syncStatus === "error" && "Cloud sync failed"}
+                      {!syncStatus && saveStatus === "saving" && "Saving locally..."}
+                      {!syncStatus && saveStatus === "saved" && "Saved locally"}
+                      {!syncStatus && saveStatus === "error" && "Save failed"}
                     </span>
                   </div>
                 )}
@@ -1140,9 +1317,71 @@ export default function DailyTasksDashboard() {
             </div>
           </div>
 
+          {/* Cloud Sync */}
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">GitHub Cloud Sync</h4>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input 
+                  type="checkbox" 
+                  checked={cloudSync}
+                  onChange={(e) => setCloudSync(e.target.checked)}
+                  disabled={!localStorage.getItem('github_token')}
+                />
+                Enable automatic cloud sync
+              </label>
+              
+              {!localStorage.getItem('github_token') && (
+                <div className="space-y-2">
+                  <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg">
+                    <strong>⚠️ Setup Required:</strong> Add your GitHub Personal Access Token to enable cloud sync
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      placeholder="GitHub Personal Access Token"
+                      className="flex-1 text-xs px-2 py-1.5 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-400"
+                      onBlur={(e) => {
+                        if (e.target.value) {
+                          localStorage.setItem('github_token', e.target.value);
+                          e.target.value = '';
+                          alert('GitHub token saved! You can now enable cloud sync.');
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    <a href="https://github.com/settings/tokens" target="_blank" className="text-blue-600 hover:underline">
+                      Create token here →
+                    </a> (Needs 'repo' permissions)
+                  </div>
+                </div>
+              )}
+              
+              {localStorage.getItem('github_token') && (
+                <div className="flex gap-2">
+                  <button 
+                    onClick={loadFromCloud}
+                    className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
+                  >
+                    <Cloud className="w-4 h-4" />
+                    Load from Cloud
+                  </button>
+                  <button 
+                    onClick={syncToCloud}
+                    className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-sm font-medium"
+                  >
+                    <Wifi className="w-4 h-4" />
+                    Sync Now
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Data Management */}
           <div className="border-t pt-4">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2">Data Management</h4>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Local Data Management</h4>
             <div className="space-y-2">
               <button 
                 onClick={exportData}
@@ -1164,7 +1403,7 @@ export default function DailyTasksDashboard() {
               </label>
               
               <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">
-                <strong>💡 Tip:</strong> Export your data regularly to backup your tasks, profile, and settings. Import to restore or sync across devices.
+                <strong>💡 Tip:</strong> Cloud sync stores data in your GitHub repo automatically. Use export/import as backup.
               </div>
             </div>
           </div>
@@ -1176,7 +1415,10 @@ export default function DailyTasksDashboard() {
               <div>Tasks stored: {tasks.length}</div>
               <div>Profile name: {name}</div>
               <div>Profile picture: {profilePicture ? "Custom" : "Default"}</div>
-              <div>Storage: Browser localStorage</div>
+              <div>User ID: {userId}</div>
+              <div>Local storage: ✓ Active</div>
+              <div>Cloud sync: {cloudSync ? "✓ Enabled" : "✗ Disabled"}</div>
+              {cloudSync && <div>GitHub repo: prathamssaraf/taskflow</div>}
             </div>
           </div>
         </div>
