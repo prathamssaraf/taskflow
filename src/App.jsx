@@ -19,6 +19,8 @@ import {
   AlarmClock,
   Clock,
   Plus,
+  Repeat,
+  Calendar,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -204,6 +206,26 @@ function TaskForm({ onAdd }) {
   const [endTime, setEndTime] = useState("10:00");
   const [priority, setPriority] = useState("medium");
   const [project, setProject] = useState("General");
+  const [recurring, setRecurring] = useState("none"); // none, everyday, weekdays
+  const [selectedWeekdays, setSelectedWeekdays] = useState([]);
+  
+  const weekdays = [
+    { key: 'mon', label: 'M', full: 'Monday' },
+    { key: 'tue', label: 'T', full: 'Tuesday' },
+    { key: 'wed', label: 'W', full: 'Wednesday' },
+    { key: 'thu', label: 'T', full: 'Thursday' },
+    { key: 'fri', label: 'F', full: 'Friday' },
+    { key: 'sat', label: 'S', full: 'Saturday' },
+    { key: 'sun', label: 'S', full: 'Sunday' }
+  ];
+  
+  const toggleWeekday = (day) => {
+    setSelectedWeekdays(prev => 
+      prev.includes(day) 
+        ? prev.filter(d => d !== day)
+        : [...prev, day]
+    );
+  };
   
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -215,12 +237,29 @@ function TaskForm({ onAdd }) {
       return;
     }
     
-    onAdd({ title, due, startTime, endTime, priority, project });
+    // Validate recurring selection
+    if (recurring === 'weekdays' && selectedWeekdays.length === 0) {
+      alert("Please select at least one day of the week");
+      return;
+    }
+    
+    onAdd({ 
+      title, 
+      due, 
+      startTime, 
+      endTime, 
+      priority, 
+      project, 
+      recurring, 
+      selectedWeekdays: recurring === 'weekdays' ? selectedWeekdays : []
+    });
+    
     setTitle("");
     // Reset times to next hour slot
     const nextHour = String(parseInt(endTime.split(':')[0]) + 1).padStart(2, '0');
     setStartTime(endTime);
     setEndTime(`${nextHour}:00`);
+    // Keep recurring settings for convenience
   };
   
   return (
@@ -267,6 +306,89 @@ function TaskForm({ onAdd }) {
           <Plus className="w-4 h-4"/> Add
         </button>
       </form>
+      
+      {/* Recurring Options */}
+      <div className="bg-slate-50 rounded-xl p-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <Repeat className="w-4 h-4 text-slate-600" />
+          <span className="text-sm font-medium text-slate-700">Repeat</span>
+        </div>
+        
+        <div className="flex gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setRecurring('none')}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              recurring === 'none' 
+                ? "bg-slate-600 text-white" 
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
+            )}
+          >
+            No Repeat
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecurring('everyday')}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              recurring === 'everyday' 
+                ? "bg-amber-500 text-white" 
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
+            )}
+          >
+            Every Day
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecurring('weekdays')}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              recurring === 'weekdays' 
+                ? "bg-blue-500 text-white" 
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
+            )}
+          >
+            Custom Days
+          </button>
+        </div>
+        
+        {/* Weekday Selection */}
+        {recurring === 'weekdays' && (
+          <div className="space-y-2">
+            <div className="text-xs text-slate-600">Select days:</div>
+            <div className="flex gap-1">
+              {weekdays.map(day => (
+                <button
+                  key={day.key}
+                  type="button"
+                  onClick={() => toggleWeekday(day.key)}
+                  className={clsx(
+                    "w-8 h-8 rounded-full text-xs font-medium transition-colors",
+                    selectedWeekdays.includes(day.key)
+                      ? "bg-blue-500 text-white"
+                      : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
+                  )}
+                  title={day.full}
+                >
+                  {day.label}
+                </button>
+              ))}
+            </div>
+            {selectedWeekdays.length > 0 && (
+              <div className="text-xs text-slate-500">
+                Repeats on: {selectedWeekdays.map(day => weekdays.find(w => w.key === day)?.full).join(', ')}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {recurring === 'everyday' && (
+          <div className="text-xs text-slate-500">
+            This task will be created for every day
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -426,9 +548,76 @@ export default function DailyTasksDashboard() {
     localStorage.setItem("tasks.v1", JSON.stringify(tasks));
   }, [tasks]);
 
-  function addTask({ title, due, startTime, endTime, priority, project }) {
-    const id = Math.random().toString(36).slice(2);
-    setTasks((t) => [...t, { id, title, due, startTime, endTime, priority, project, done: false }]);
+  // Helper functions for recurring tasks
+  const getDayOfWeek = (dateString) => {
+    const date = new Date(dateString);
+    const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    return days[date.getDay()];
+  };
+  
+  const getNextDates = (startDate, days = 30) => {
+    const dates = [];
+    const start = new Date(startDate);
+    for (let i = 0; i < days; i++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + i);
+      dates.push(date.toISOString().slice(0, 10));
+    }
+    return dates;
+  };
+  
+  function addTask({ title, due, startTime, endTime, priority, project, recurring = 'none', selectedWeekdays = [] }) {
+    const baseTasks = [];
+    
+    if (recurring === 'none') {
+      // Single task
+      const id = Math.random().toString(36).slice(2);
+      baseTasks.push({ id, title, due, startTime, endTime, priority, project, done: false });
+    } else if (recurring === 'everyday') {
+      // Create tasks for next 30 days
+      const dates = getNextDates(due, 30);
+      dates.forEach(date => {
+        const id = Math.random().toString(36).slice(2);
+        baseTasks.push({ 
+          id, 
+          title: `${title} (Daily)`, 
+          due: date, 
+          startTime, 
+          endTime, 
+          priority, 
+          project, 
+          done: false,
+          recurring: 'everyday'
+        });
+      });
+    } else if (recurring === 'weekdays') {
+      // Create tasks for selected weekdays for next 8 weeks
+      const dates = getNextDates(due, 56); // 8 weeks
+      dates.forEach(date => {
+        const dayOfWeek = getDayOfWeek(date);
+        if (selectedWeekdays.includes(dayOfWeek)) {
+          const id = Math.random().toString(36).slice(2);
+          const weekdayNames = selectedWeekdays.map(day => {
+            const dayMap = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+            return dayMap[day];
+          }).join(', ');
+          baseTasks.push({ 
+            id, 
+            title: `${title} (${weekdayNames})`, 
+            due: date, 
+            startTime, 
+            endTime, 
+            priority, 
+            project, 
+            done: false,
+            recurring: 'weekdays',
+            weekdays: selectedWeekdays
+          });
+        }
+      });
+    }
+    
+    setTasks((t) => [...t, ...baseTasks]);
   }
   function toggleTask(id) {
     setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
