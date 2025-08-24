@@ -17,6 +17,7 @@ import {
   Circle,
   Flag,
   AlarmClock,
+  Clock,
   Plus,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
@@ -61,10 +62,10 @@ function Modal({ open, onClose, title, children }) {
 
 // ---------- Task types & storage ----------
 const defaultTasks = [
-  { id: "t1", title: "Daily standup notes", due: todayISO(), priority: "high", done: false, project: "Work" },
-  { id: "t2", title: "30‑min workout", due: todayISO(), priority: "medium", done: true, project: "Health" },
-  { id: "t3", title: "Read 20 pages", due: addDaysISO(0), priority: "low", done: false, project: "Personal" },
-  { id: "t4", title: "Prepare client deck", due: addDaysISO(1), priority: "high", done: false, project: "Work" },
+  { id: "t1", title: "Daily standup notes", due: todayISO(), startTime: "09:00", endTime: "09:30", priority: "high", done: false, project: "Work" },
+  { id: "t2", title: "30‑min workout", due: todayISO(), startTime: "07:00", endTime: "07:30", priority: "medium", done: true, project: "Health" },
+  { id: "t3", title: "Read 20 pages", due: addDaysISO(0), startTime: "20:00", endTime: "20:45", priority: "low", done: false, project: "Personal" },
+  { id: "t4", title: "Prepare client deck", due: addDaysISO(1), startTime: "14:00", endTime: "16:00", priority: "high", done: false, project: "Work" },
 ];
 
 function todayISO() {
@@ -199,34 +200,74 @@ function Calendar({ selected, onSelect }) {
 function TaskForm({ onAdd }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState(todayISO());
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("10:00");
   const [priority, setPriority] = useState("medium");
   const [project, setProject] = useState("General");
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    
+    // Validate time range
+    if (startTime >= endTime) {
+      alert("Start time must be before end time");
+      return;
+    }
+    
+    onAdd({ title, due, startTime, endTime, priority, project });
+    setTitle("");
+    // Reset times to next hour slot
+    const nextHour = String(parseInt(endTime.split(':')[0]) + 1).padStart(2, '0');
+    setStartTime(endTime);
+    setEndTime(`${nextHour}:00`);
+  };
+  
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!title.trim()) return;
-        onAdd({ title, due, priority, project });
-        setTitle("");
-      }}
-      className="flex gap-2"
-    >
-      <input
-        className="flex-1 rounded-xl bg-white ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400"
-        placeholder="Add a task..."
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-      />
-      <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-xl bg-white ring-1 ring-slate-200 px-2 py-2 text-sm" />
-      <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded-xl bg-white ring-1 ring-slate-200 px-2 py-2 text-sm">
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-      </select>
-      <button type="submit" className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-2 text-sm font-medium text-white shadow hover:brightness-105">
-        <Plus className="w-4 h-4"/> Add
-      </button>
-    </form>
+    <div className="space-y-3">
+      <form onSubmit={handleSubmit} className="flex gap-2 flex-wrap">
+        <input
+          className="flex-1 min-w-[200px] rounded-xl bg-white ring-1 ring-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400"
+          placeholder="Add a task..."
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+        />
+        <input 
+          type="date" 
+          value={due} 
+          onChange={(e) => setDue(e.target.value)} 
+          className="rounded-xl bg-white ring-1 ring-slate-200 px-2 py-2 text-sm focus:ring-2 focus:ring-amber-400" 
+        />
+        <div className="flex items-center gap-1 bg-white ring-1 ring-slate-200 rounded-xl px-2 py-2">
+          <input 
+            type="time" 
+            value={startTime} 
+            onChange={(e) => setStartTime(e.target.value)} 
+            className="text-sm focus:outline-none w-20" 
+          />
+          <span className="text-slate-400 text-xs">to</span>
+          <input 
+            type="time" 
+            value={endTime} 
+            onChange={(e) => setEndTime(e.target.value)} 
+            className="text-sm focus:outline-none w-20" 
+          />
+        </div>
+        <select 
+          value={priority} 
+          onChange={(e) => setPriority(e.target.value)} 
+          className="rounded-xl bg-white ring-1 ring-slate-200 px-2 py-2 text-sm focus:ring-2 focus:ring-amber-400"
+        >
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <button type="submit" className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-2 text-sm font-medium text-white shadow hover:brightness-105">
+          <Plus className="w-4 h-4"/> Add
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -237,12 +278,35 @@ function TaskRow({ task, onToggle, onDelete }) {
       : task.priority === "medium"
       ? "bg-amber-50 text-amber-600"
       : "bg-emerald-50 text-emerald-600";
+  
+  // Format time display
+  const formatTime = (time) => {
+    if (!time) return '';
+    return new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+  
+  const timeRange = task.startTime && task.endTime 
+    ? `${formatTime(task.startTime)} - ${formatTime(task.endTime)}`
+    : '';
+  
   return (
     <div className="flex items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-100 shadow-sm">
       <button onClick={() => onToggle(task.id)} className="shrink-0">
         {task.done ? <CheckCircle2 className="w-5 h-5 text-emerald-500" /> : <Circle className="w-5 h-5 text-slate-300" />}
       </button>
-      <div className={clsx("flex-1 text-sm", task.done && "line-through text-slate-400")}>{task.title}</div>
+      <div className="flex-1 min-w-0">
+        <div className={clsx("text-sm font-medium", task.done && "line-through text-slate-400")}>{task.title}</div>
+        {timeRange && (
+          <div className={clsx("text-xs flex items-center gap-1 mt-1", task.done ? "text-slate-300" : "text-slate-500")}>
+            <Clock className="w-3 h-3" />
+            {timeRange}
+          </div>
+        )}
+      </div>
       <Pill className="bg-slate-100 text-slate-600"><AlarmClock className="w-3 h-3 mr-1"/> {task.due}</Pill>
       <Pill className={priColor}><Flag className="w-3 h-3 mr-1"/> {task.priority}</Pill>
       <button onClick={() => onDelete(task.id)} className="text-slate-300 hover:text-rose-500"><Trash2 className="w-5 h-5"/></button>
@@ -302,21 +366,30 @@ function RightPanel({ selectedDate, setSelectedDate, agenda }) {
                 "rounded-2xl bg-white p-3 ring-1 ring-slate-100 shadow-sm transition-opacity",
                 s.done && "opacity-60"
               )}>
-                <div className={clsx(
-                  "text-[11px] font-medium",
-                  s.done ? "text-emerald-600" : "text-slate-400"
-                )}>{s.time}</div>
-                <div className="mt-1 flex items-center justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <div className={clsx(
+                    "text-[11px] font-medium",
+                    s.done ? "text-emerald-600" : s.startTime ? "text-blue-600" : "text-slate-400"
+                  )}>{s.time}</div>
+                  {s.duration && (
+                    <div className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded">
+                      {s.duration}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <div className={clsx(
                       "text-sm font-semibold",
                       s.done ? "text-slate-500 line-through" : "text-slate-700"
                     )}>{s.title}</div>
-                    <div className={clsx("text-xs mt-1 inline-flex px-2 py-0.5 rounded-md", s.color)}>{s.desc}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className={clsx("text-xs inline-flex px-2 py-0.5 rounded-md", s.color)}>{s.desc}</div>
+                    </div>
                   </div>
                 </div>
               </div>
-            ))}
+            ))
             {!agenda.length && (
               <div className="text-center py-4">
                 <div className="text-xs text-slate-400">No tasks for this date</div>
@@ -354,9 +427,9 @@ export default function DailyTasksDashboard() {
     localStorage.setItem("tasks.v1", JSON.stringify(tasks));
   }, [tasks]);
 
-  function addTask({ title, due, priority, project }) {
+  function addTask({ title, due, startTime, endTime, priority, project }) {
     const id = Math.random().toString(36).slice(2);
-    setTasks((t) => [...t, { id, title, due, priority, project, done: false }]);
+    setTasks((t) => [...t, { id, title, due, startTime, endTime, priority, project, done: false }]);
   }
   function toggleTask(id) {
     setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
@@ -375,26 +448,53 @@ export default function DailyTasksDashboard() {
   const agenda = tasks
     .filter((t) => t.due === selectedDate)
     .sort((a, b) => {
-      // Sort by priority first (high -> medium -> low), then by title
+      // Sort by start time first, then by priority
+      if (a.startTime && b.startTime) {
+        if (a.startTime !== b.startTime) {
+          return a.startTime.localeCompare(b.startTime);
+        }
+      }
+      // If no start time, sort by priority
       const priorityOrder = { high: 0, medium: 1, low: 2 };
       if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
         return priorityOrder[a.priority] - priorityOrder[b.priority];
       }
       return a.title.localeCompare(b.title);
     })
-    .slice(0, 5)
-    .map((t, index) => ({
-      time: t.done ? "✓ Done" : `Task ${index + 1}`,
-      title: t.title,
-      desc: `${t.priority} priority • ${t.project || 'General'}`,
-      done: t.done,
-      color:
-        t.priority === "high"
-          ? "bg-rose-500/10 text-rose-600"
-          : t.priority === "medium"
-          ? "bg-amber-500/10 text-amber-600"
-          : "bg-emerald-500/10 text-emerald-600",
-    }));
+    .slice(0, 6)
+    .map((t) => {
+      // Format time display
+      const formatTime = (time) => {
+        if (!time) return '';
+        return new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+      };
+      
+      const timeDisplay = t.done 
+        ? "✓ Completed" 
+        : t.startTime && t.endTime
+        ? `${formatTime(t.startTime)} - ${formatTime(t.endTime)}`
+        : "All day";
+      
+      return {
+        time: timeDisplay,
+        title: t.title,
+        desc: `${t.priority} priority • ${t.project || 'General'}`,
+        done: t.done,
+        startTime: t.startTime,
+        duration: t.startTime && t.endTime ? 
+          Math.round((new Date(`2000-01-01T${t.endTime}`) - new Date(`2000-01-01T${t.startTime}`)) / 60000) + ' min' : '',
+        color:
+          t.priority === "high"
+            ? "bg-rose-500/10 text-rose-600"
+            : t.priority === "medium"
+            ? "bg-amber-500/10 text-amber-600"
+            : "bg-emerald-500/10 text-emerald-600",
+      };
+    });
 
   // weekly chart: tasks completed in last 7 days
   const week = Array.from({ length: 7 }).map((_, i) => {
