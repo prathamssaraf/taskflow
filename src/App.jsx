@@ -25,6 +25,8 @@ import {
   Save,
   Camera,
   Upload,
+  Download,
+  FileText,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -659,10 +661,11 @@ function RightPanel({ selectedDate, setSelectedDate, agenda, name, setName, prof
 export default function DailyTasksDashboard() {
   const [tasks, setTasks] = useState(() => {
     try {
-      const saved = localStorage.getItem("tasks.v1");
+      const saved = localStorage.getItem("taskflow.tasks");
+      console.log("Loading tasks from localStorage:", saved ? "found data" : "no data");
       return saved ? JSON.parse(saved) : defaultTasks;
     } catch (error) {
-      console.error("Error loading from localStorage:", error);
+      console.error("Error loading tasks from localStorage:", error);
       return defaultTasks;
     }
   });
@@ -692,20 +695,23 @@ export default function DailyTasksDashboard() {
   });
 
   useEffect(() => {
-    if (tasks.length === 0) return; // Don't show saving indicator on initial load
+    // Don't save default tasks on first load
+    if (tasks === defaultTasks) return;
     
     setSaveStatus("saving");
     const saveTimer = setTimeout(() => {
       try {
-        localStorage.setItem("tasks.v1", JSON.stringify(tasks));
+        const dataToSave = JSON.stringify(tasks);
+        localStorage.setItem("taskflow.tasks", dataToSave);
+        console.log("Saved tasks to localStorage:", tasks.length, "tasks");
         setSaveStatus("saved");
-        setTimeout(() => setSaveStatus(""), 2000); // Clear "saved" status after 2 seconds
+        setTimeout(() => setSaveStatus(""), 2000);
       } catch (error) {
-        console.error("Error saving to localStorage:", error);
+        console.error("Error saving tasks to localStorage:", error);
         setSaveStatus("error");
         setTimeout(() => setSaveStatus(""), 3000);
       }
-    }, 300); // Small delay to batch rapid changes
+    }, 300);
 
     return () => clearTimeout(saveTimer);
   }, [tasks]);
@@ -727,6 +733,51 @@ export default function DailyTasksDashboard() {
       console.error("Error saving profile picture:", error);
     }
   }, [profilePicture]);
+
+  // Data export/import functions
+  const exportData = () => {
+    const data = {
+      tasks,
+      name,
+      profilePicture,
+      exportDate: new Date().toISOString(),
+      version: "1.0"
+    };
+    
+    const dataStr = JSON.stringify(data, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `taskflow-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
+  const importData = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === "application/json") {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const importedData = JSON.parse(e.target.result);
+          
+          if (importedData.tasks) setTasks(importedData.tasks);
+          if (importedData.name) setName(importedData.name);
+          if (importedData.profilePicture) setProfilePicture(importedData.profilePicture);
+          
+          alert("Data imported successfully!");
+        } catch (error) {
+          console.error("Error importing data:", error);
+          alert("Error importing data. Please check the file format.");
+        }
+      };
+      reader.readAsText(file);
+    }
+    // Reset the input
+    event.target.value = '';
+  };
 
   // Helper functions for recurring tasks
   const getDayOfWeek = (dateString) => {
@@ -1072,13 +1123,71 @@ export default function DailyTasksDashboard() {
 
       {/* Settings */}
       <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Settings">
-        <div className="space-y-3 text-sm">
-          <label className="flex items-center gap-2"><input type="checkbox" defaultChecked /> Show agenda in right panel</label>
-          <label className="flex items-center gap-2"><input type="checkbox" defaultChecked /> Enable local save</label>
-          <label className="flex items-center gap-2"><input type="checkbox" /> Email reminders (demo)</label>
+        <div className="space-y-4">
+          {/* General Settings */}
+          <div>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">General</h4>
+            <div className="space-y-2 text-sm">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" defaultChecked /> Show agenda in right panel
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" defaultChecked /> Enable automatic saving
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" /> Email reminders (demo)
+              </label>
+            </div>
+          </div>
+
+          {/* Data Management */}
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Data Management</h4>
+            <div className="space-y-2">
+              <button 
+                onClick={exportData}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Export All Data
+              </button>
+              
+              <label className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 cursor-pointer text-sm font-medium">
+                <Upload className="w-4 h-4" />
+                Import Data
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={importData}
+                  className="hidden"
+                />
+              </label>
+              
+              <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">
+                <strong>💡 Tip:</strong> Export your data regularly to backup your tasks, profile, and settings. Import to restore or sync across devices.
+              </div>
+            </div>
+          </div>
+
+          {/* Storage Info */}
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Storage Info</h4>
+            <div className="text-xs text-slate-500 space-y-1">
+              <div>Tasks stored: {tasks.length}</div>
+              <div>Profile name: {name}</div>
+              <div>Profile picture: {profilePicture ? "Custom" : "Default"}</div>
+              <div>Storage: Browser localStorage</div>
+            </div>
+          </div>
         </div>
-        <div className="mt-4 text-right">
-          <button onClick={() => setShowSettings(false)} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white">Close</button>
+        
+        <div className="mt-6 text-right">
+          <button 
+            onClick={() => setShowSettings(false)} 
+            className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:brightness-105"
+          >
+            Close
+          </button>
         </div>
       </Modal>
     </div>
