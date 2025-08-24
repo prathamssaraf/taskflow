@@ -389,7 +389,7 @@ function RightPanel({ selectedDate, setSelectedDate, agenda }) {
                   </div>
                 </div>
               </div>
-            ))
+            ))}
             {!agenda.length && (
               <div className="text-center py-4">
                 <div className="text-xs text-slate-400">No tasks for this date</div>
