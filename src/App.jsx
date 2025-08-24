@@ -307,7 +307,6 @@ function TaskRow({ task, onToggle, onDelete }) {
           </div>
         )}
       </div>
-      <Pill className="bg-slate-100 text-slate-600"><AlarmClock className="w-3 h-3 mr-1"/> {task.due}</Pill>
       <Pill className={priColor}><Flag className="w-3 h-3 mr-1"/> {task.priority}</Pill>
       <button onClick={() => onDelete(task.id)} className="text-slate-300 hover:text-rose-500"><Trash2 className="w-5 h-5"/></button>
     </div>
