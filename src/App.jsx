@@ -438,27 +438,68 @@ export default function DailyTasksDashboard() {
     setTasks((ts) => ts.filter((t) => t.id !== id));
   }
 
+  // Helper function for time-based sorting
+  const sortByTime = (a, b) => {
+    // First, sort by date
+    if (a.due !== b.due) {
+      return a.due.localeCompare(b.due);
+    }
+    
+    // Then by completion status (pending tasks first)
+    if (a.done !== b.done) {
+      return a.done ? 1 : -1;
+    }
+    
+    // Then by start time if both have times
+    if (a.startTime && b.startTime) {
+      return a.startTime.localeCompare(b.startTime);
+    }
+    
+    // Tasks with times come before tasks without times
+    if (a.startTime && !b.startTime) return -1;
+    if (!a.startTime && b.startTime) return 1;
+    
+    // Finally, sort by priority
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    }
+    
+    // Last resort: alphabetical
+    return a.title.localeCompare(b.title);
+  };
+  
   // derive
   const filtered = tasks
     .filter((t) => (filter === "today" ? t.due === todayISO() : true))
     .filter((t) => (filter === "done" ? t.done : filter === "pending" ? !t.done : true))
     .filter((t) => (filter === "high" ? t.priority === "high" : true))
-    .filter((t) => t.title.toLowerCase().includes(query.toLowerCase()));
+    .filter((t) => t.title.toLowerCase().includes(query.toLowerCase()))
+    .sort(sortByTime);
 
   const agenda = tasks
     .filter((t) => t.due === selectedDate)
     .sort((a, b) => {
-      // Sort by start time first, then by priority
-      if (a.startTime && b.startTime) {
-        if (a.startTime !== b.startTime) {
-          return a.startTime.localeCompare(b.startTime);
-        }
+      // Sort completed tasks to the bottom
+      if (a.done !== b.done) {
+        return a.done ? 1 : -1;
       }
-      // If no start time, sort by priority
+      
+      // Sort by start time (earliest first)
+      if (a.startTime && b.startTime) {
+        return a.startTime.localeCompare(b.startTime);
+      }
+      
+      // Tasks with times come before tasks without times
+      if (a.startTime && !b.startTime) return -1;
+      if (!a.startTime && b.startTime) return 1;
+      
+      // For tasks without times, sort by priority
       const priorityOrder = { high: 0, medium: 1, low: 2 };
       if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
         return priorityOrder[a.priority] - priorityOrder[b.priority];
       }
+      
       return a.title.localeCompare(b.title);
     })
     .slice(0, 6)
@@ -613,7 +654,13 @@ export default function DailyTasksDashboard() {
               <div className="col-span-12">
                 <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
                   <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-700">Tasks</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-slate-700">Tasks</h3>
+                      <div className="flex items-center gap-1 text-xs text-slate-400">
+                        <Clock className="w-3 h-3" />
+                        <span>Sorted by time</span>
+                      </div>
+                    </div>
                     <div className="text-xs text-slate-400">{filtered.length} shown</div>
                   </div>
                   <TaskForm onAdd={addTask} />
