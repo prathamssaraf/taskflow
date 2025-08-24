@@ -535,8 +535,13 @@ function RightPanel({ selectedDate, setSelectedDate, agenda }) {
 // ---------- Main App ----------
 export default function DailyTasksDashboard() {
   const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem("tasks.v1");
-    return saved ? JSON.parse(saved) : defaultTasks;
+    try {
+      const saved = localStorage.getItem("tasks.v1");
+      return saved ? JSON.parse(saved) : defaultTasks;
+    } catch (error) {
+      console.error("Error loading from localStorage:", error);
+      return defaultTasks;
+    }
   });
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all"); // all | today | done | pending | high
@@ -545,7 +550,11 @@ export default function DailyTasksDashboard() {
   const [notifOpen, setNotifOpen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem("tasks.v1", JSON.stringify(tasks));
+    try {
+      localStorage.setItem("tasks.v1", JSON.stringify(tasks));
+    } catch (error) {
+      console.error("Error saving to localStorage:", error);
+    }
   }, [tasks]);
 
   // Helper functions for recurring tasks
