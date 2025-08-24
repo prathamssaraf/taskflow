@@ -167,12 +167,19 @@ class AuthSystem {
         const content = decodeURIComponent(escape(atob(fileInfo.content)));
         return JSON.parse(content);
       } else if (response.status === 404) {
-        // Users file doesn't exist yet
+        console.log('Users file not found, will create on first registration');
         return {};
+      } else if (response.status === 403) {
+        throw new Error('GitHub token does not have sufficient permissions. Please ensure your token has "repo" permissions.');
+      } else if (response.status === 401) {
+        throw new Error('Invalid GitHub token. Please check your token and try again.');
       } else {
-        throw new Error(`GitHub API error: ${response.status}`);
+        throw new Error(`GitHub API error: ${response.status}. Please check your GitHub token permissions.`);
       }
     } catch (error) {
+      if (error.message.includes('GitHub token')) {
+        throw error; // Re-throw auth errors to show to user
+      }
       console.error('Error loading users from GitHub:', error);
       return {};
     }
@@ -221,7 +228,15 @@ class AuthSystem {
         }
       );
 
-      if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('GitHub token does not have sufficient permissions. Please ensure your token has "repo" permissions.');
+        } else if (response.status === 401) {
+          throw new Error('Invalid GitHub token. Please check your token and try again.');
+        } else {
+          throw new Error(`GitHub API error: ${response.status}. Please check your GitHub token permissions.`);
+        }
+      }
       return true;
     } catch (error) {
       console.error('Error saving users to GitHub:', error);
@@ -378,12 +393,20 @@ function LoginScreen({ onLogin }) {
                 placeholder="GitHub Personal Access Token"
                 required
               />
-              <p className="text-xs text-slate-500 mt-1">
-                <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
-                  Create token here →
-                </a> (Needs 'repo' permissions)
-                {isLogin && <span className="ml-2">• Required for cross-device login</span>}
-              </p>
+              <div className="text-xs text-slate-500 mt-1 space-y-1">
+                <div>
+                  <a href="https://github.com/settings/tokens" target="_blank" className="text-amber-600 hover:underline">
+                    Create token here →
+                  </a> (Needs 'repo' permissions)
+                  {isLogin && <span className="ml-2">• Required for cross-device login</span>}
+                </div>
+                <div className="bg-blue-50 text-blue-700 p-2 rounded text-xs">
+                  <strong>⚠️ Token Setup:</strong> 
+                  <br />1. Click "Generate new token (classic)" 
+                  <br />2. Select "repo" (Full control of private repositories)
+                  <br />3. Copy and paste the token here
+                </div>
+              </div>
             </div>
 
             {error && (
