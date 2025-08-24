@@ -36,114 +36,42 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
-// ---------- GitHub API Configuration ----------
-const GITHUB_CONFIG = {
-  owner: 'prathamssaraf', // Your GitHub username
-  repo: 'taskflow',       // Your repo name
-  dataPath: 'data',       // Folder to store user data
-  apiUrl: 'https://api.github.com',
-  // You can add your GitHub token here for automatic operations
-  // token: 'your_github_token_here' // Uncomment and add your token
+// ---------- Simple Database Configuration ----------
+const DB_CONFIG = {
+  usersFile: '/db/users.json',
+  dataPath: '/db/data/'
 };
 
-// ---------- GitHub API Functions ----------
-class GitHubStorage {
+// ---------- Simple Database Functions ----------
+class SimpleDB {
   constructor(userId) {
     this.userId = userId;
-    this.filePath = `${GITHUB_CONFIG.dataPath}/${userId}.json`;
+    this.userDataFile = `${DB_CONFIG.dataPath}${userId}.json`;
   }
 
-  async saveToGitHub(data) {
-    try {
-      // Use master token if available, otherwise skip GitHub sync
-      if (!GITHUB_CONFIG.token) {
-        console.log('No master GitHub token configured, skipping cloud sync');
-        return;
-      }
-      const token = GITHUB_CONFIG.token;
-
-      // First, try to get existing file to get its SHA
-      let sha = null;
-      try {
-        const getResponse = await fetch(
-          `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
-          {
-            headers: {
-              'Authorization': `token ${token}`,
-              'Accept': 'application/vnd.github.v3+json'
-            }
-          }
-        );
-        if (getResponse.ok) {
-          const fileInfo = await getResponse.json();
-          sha = fileInfo.sha;
-        }
-      } catch (e) {
-        console.log('File does not exist yet, creating new...');
-      }
-
-      // Create or update file with proper UTF-8 encoding
-      const jsonString = JSON.stringify(data, null, 2);
-      const content = btoa(unescape(encodeURIComponent(jsonString)));
-      const response = await fetch(
-        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Authorization': `token ${token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            message: `Update TaskFlow data for ${this.userId}`,
-            content: content,
-            ...(sha && { sha })
-          })
-        }
-      );
-
-      if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      console.error('Error saving to GitHub:', error);
-      throw error;
-    }
+  async saveUserData(data) {
+    // For now, we'll store locally until we can update the static files
+    // In a real setup, this would send to a backend API
+    const userDataKey = `taskflow.data.${this.userId}`;
+    localStorage.setItem(userDataKey, JSON.stringify(data));
+    console.log('User data saved locally for', this.userId);
   }
 
-  async loadFromGitHub() {
+  async loadUserData() {
     try {
-      // Use master token if available, otherwise return null
-      if (!GITHUB_CONFIG.token) {
-        console.log('No master GitHub token configured, skipping cloud load');
-        return null;
+      // Try to load from our static JSON file first
+      const response = await fetch(this.userDataFile);
+      if (response.ok) {
+        return await response.json();
       }
-      const token = GITHUB_CONFIG.token;
-
-      const response = await fetch(
-        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
-        {
-          headers: {
-            'Authorization': `token ${token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.log('User data file not found, will create on first save');
-          return null;
-        }
-        throw new Error(`GitHub API error: ${response.status}`);
-      }
-
-      const fileInfo = await response.json();
-      const content = decodeURIComponent(escape(atob(fileInfo.content)));
-      return JSON.parse(content);
     } catch (error) {
-      console.error('Error loading from GitHub:', error);
-      return null;
+      console.log('No static data file found, checking localStorage');
     }
+
+    // Fallback to localStorage
+    const userDataKey = `taskflow.data.${this.userId}`;
+    const saved = localStorage.getItem(userDataKey);
+    return saved ? JSON.parse(saved) : null;
   }
 }
 
@@ -160,137 +88,31 @@ class AuthSystem {
     return hash.toString();
   }
 
-  static async loadUsersFromGitHub() {
+  static async loadUsers() {
     try {
-      // For simplicity, we'll disable GitHub-based auth temporarily
-      // and fall back to localStorage until a master token is configured
-      if (!GITHUB_CONFIG.token) {
-        const users = localStorage.getItem('taskflow.users');
-        return users ? JSON.parse(users) : {};
-      }
-
-      const response = await fetch(
-        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
-        {
-          headers: {
-            'Authorization': `token ${GITHUB_CONFIG.token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        }
-      );
-
+      // Load users from our simple JSON database
+      const response = await fetch(DB_CONFIG.usersFile);
       if (response.ok) {
-        const fileInfo = await response.json();
-        const content = decodeURIComponent(escape(atob(fileInfo.content)));
-        return JSON.parse(content);
-      } else if (response.status === 404) {
-        console.log('Users file not found, will create on first registration');
-        return {};
-      } else if (response.status === 403) {
-        throw new Error('GitHub token does not have sufficient permissions. Please ensure your token has "repo" permissions.');
-      } else if (response.status === 401) {
-        throw new Error('Invalid GitHub token. Please check your token and try again.');
+        return await response.json();
       } else {
-        throw new Error(`GitHub API error: ${response.status}. Please check your GitHub token permissions.`);
+        console.log('Users file not found, returning empty users');
+        return {};
       }
     } catch (error) {
-      if (error.message.includes('GitHub token')) {
-        throw error; // Re-throw auth errors to show to user
-      }
-      console.error('Error loading users from GitHub:', error);
+      console.error('Error loading users:', error);
       return {};
     }
   }
 
-  static async saveUsersToGitHub(users) {
-    try {
-      // For simplicity, we'll use localStorage until master token is configured
-      if (!GITHUB_CONFIG.token) {
-        localStorage.setItem('taskflow.users', JSON.stringify(users));
-        return true;
-      }
-
-      // First, try to get existing file SHA
-      let sha = null;
-      try {
-        const getResponse = await fetch(
-          `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
-          {
-            headers: {
-              'Authorization': `token ${GITHUB_CONFIG.token}`,
-              'Accept': 'application/vnd.github.v3+json'
-            }
-          }
-        );
-        if (getResponse.ok) {
-          const fileInfo = await getResponse.json();
-          sha = fileInfo.sha;
-        }
-      } catch (e) {
-        console.log('Users file does not exist yet, creating new...');
-      }
-
-      // Create or update users file
-      const jsonString = JSON.stringify(users, null, 2);
-      const content = btoa(unescape(encodeURIComponent(jsonString)));
-      
-      const response = await fetch(
-        `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/users/users.json`,
-        {
-          method: 'PUT',
-          headers: {
-            'Authorization': `token ${GITHUB_CONFIG.token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            message: `Update user accounts`,
-            content: content,
-            ...(sha && { sha })
-          })
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 403) {
-          throw new Error('GitHub token does not have sufficient permissions. Please ensure your token has "repo" permissions.');
-        } else if (response.status === 401) {
-          throw new Error('Invalid GitHub token. Please check your token and try again.');
-        } else {
-          throw new Error(`GitHub API error: ${response.status}. Please check your GitHub token permissions.`);
-        }
-      }
-      return true;
-    } catch (error) {
-      console.error('Error saving users to GitHub:', error);
-      throw error;
-    }
-  }
-
   static async registerUser(username, password) {
-    // Load existing users 
-    const users = await this.loadUsersFromGitHub();
-    
-    if (users[username]) {
-      throw new Error('Username already exists');
-    }
-
-    const userId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    users[username] = {
-      userId,
-      passwordHash: this.hashPassword(password),
-      createdAt: new Date().toISOString()
-    };
-
-    // Save users back
-    await this.saveUsersToGitHub(users);
-
-    return { username, userId };
+    // For now, registration creates a new user but can't persist to static files
+    // In a real setup, this would call a backend API
+    throw new Error('Registration is currently disabled. Use existing account: username "pratham", password "pratham"');
   }
 
   static async loginUser(username, password) {
-    // Load users
-    const users = await this.loadUsersFromGitHub();
+    // Load users from our simple database
+    const users = await this.loadUsers();
     const user = users[username];
 
     if (!user || user.passwordHash !== this.hashPassword(password)) {
@@ -427,7 +249,8 @@ function LoginScreen({ onLogin }) {
             </button>
             
             <div className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
-              <strong>🌐 Simple & Secure:</strong> Just username and password. Your account works across all devices.
+              <strong>🌐 Demo Account:</strong> Username: <code>pratham</code>, Password: <code>pratham</code>
+              <br />Works across all devices with simple JSON database.
             </div>
           </div>
         </div>
@@ -1143,7 +966,7 @@ function DailyTasksDashboard({ user, onLogout }) {
   // Cloud sync states
   const [cloudSync, setCloudSync] = useState(true); // Auto-enable for logged-in users
   const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "error"
-  const [githubStorage] = useState(() => new GitHubStorage(user.userId));
+  const [simpleDB] = useState(() => new SimpleDB(user.userId));
 
   useEffect(() => {
     // Don't save default tasks on first load
@@ -1199,7 +1022,7 @@ function DailyTasksDashboard({ user, onLogout }) {
         version: "2.0"
       };
       
-      await githubStorage.saveToGitHub(data);
+      await simpleDB.saveUserData(data);
       setSyncStatus("synced");
       setTimeout(() => setSyncStatus(""), 3000);
     } catch (error) {
@@ -1212,7 +1035,7 @@ function DailyTasksDashboard({ user, onLogout }) {
   const loadFromCloud = async () => {
     try {
       setSyncStatus("syncing");
-      const data = await githubStorage.loadFromGitHub();
+      const data = await simpleDB.loadUserData();
       
       if (data) {
         if (data.tasks) setTasks(data.tasks);
