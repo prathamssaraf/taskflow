@@ -76,8 +76,9 @@ class GitHubStorage {
         console.log('File does not exist yet, creating new...');
       }
 
-      // Create or update file
-      const content = btoa(JSON.stringify(data, null, 2));
+      // Create or update file with proper UTF-8 encoding
+      const jsonString = JSON.stringify(data, null, 2);
+      const content = btoa(unescape(encodeURIComponent(jsonString)));
       const response = await fetch(
         `${GITHUB_CONFIG.apiUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${this.filePath}`,
         {
@@ -127,7 +128,7 @@ class GitHubStorage {
       }
 
       const fileInfo = await response.json();
-      const content = atob(fileInfo.content);
+      const content = decodeURIComponent(escape(atob(fileInfo.content)));
       return JSON.parse(content);
     } catch (error) {
       console.error('Error loading from GitHub:', error);
@@ -304,7 +305,12 @@ function LoginScreen({ onLogin }) {
 
             {error && (
               <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm">
-                {error}
+                <strong>Error:</strong> {error}
+                {error.includes('Invalid username or password') && (
+                  <div className="mt-2 text-xs">
+                    💡 <strong>Tip:</strong> Accounts are browser-specific. In incognito mode, you'll need to create a new account.
+                  </div>
+                )}
               </div>
             )}
 
@@ -324,13 +330,17 @@ function LoginScreen({ onLogin }) {
             </button>
           </form>
 
-          <div className="mt-6 text-center">
+          <div className="mt-6 text-center space-y-3">
             <button
               onClick={() => setIsLogin(!isLogin)}
               className="text-sm text-slate-600 hover:text-amber-600"
             >
               {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
             </button>
+            
+            <div className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
+              <strong>📱 Note:</strong> Accounts are stored locally in your browser. Use the same browser to access your account, or create a new account in incognito/different browsers.
+            </div>
           </div>
         </div>
       </div>
@@ -1107,6 +1117,16 @@ function DailyTasksDashboard({ user, onLogout }) {
     } catch (error) {
       console.error("Cloud sync failed:", error);
       setSyncStatus("error");
+      
+      // Show user-friendly error message
+      if (error.message.includes('InvalidCharacterError')) {
+        console.error("GitHub sync failed: Text encoding issue. This has been fixed in the latest version.");
+      } else if (error.message.includes('401')) {
+        console.error("GitHub sync failed: Invalid token. Please check your GitHub token permissions.");
+      } else if (error.message.includes('404')) {
+        console.log("GitHub sync: Creating new data file for user.");
+      }
+      
       setTimeout(() => setSyncStatus(""), 5000);
     }
   };
