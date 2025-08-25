@@ -42,33 +42,172 @@ const DB_CONFIG = {
   dataPath: '/taskflow/db/data/'
 };
 
-// ---------- Simple Database Functions ----------
-class SimpleDB {
+// ---------- GitHub Gist Database Functions ----------
+class GistDB {
   constructor(userId) {
     this.userId = userId;
-    this.userDataFile = `${DB_CONFIG.dataPath}${userId}.json`;
+    this.gistId = null;
+    this.masterToken = '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'; // Your master token
+  }
+
+  async findUserGist() {
+    try {
+      // Search for existing gist for this user
+      const response = await fetch('https://api.github.com/gists', {
+        headers: {
+          'Authorization': `token ${this.masterToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+
+      if (response.ok) {
+        const gists = await response.json();
+        const userGist = gists.find(gist => 
+          gist.description === `TaskFlow data for ${this.userId}`
+        );
+        
+        if (userGist) {
+          this.gistId = userGist.id;
+          return userGist.id;
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('Error finding user gist:', error);
+      return null;
+    }
+  }
+
+  async createUserGist(data) {
+    try {
+      const response = await fetch('https://api.github.com/gists', {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${this.masterToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          description: `TaskFlow data for ${this.userId}`,
+          public: false,
+          files: {
+            'taskflow-data.json': {
+              content: JSON.stringify(data, null, 2)
+            }
+          }
+        })
+      });
+
+      if (response.ok) {
+        const gist = await response.json();
+        this.gistId = gist.id;
+        console.log('Created new gist for user:', this.userId);
+        return gist.id;
+      } else {
+        throw new Error(`Failed to create gist: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Error creating user gist:', error);
+      throw error;
+    }
   }
 
   async saveUserData(data) {
-    // For now, we'll store locally until we can update the static files
-    // In a real setup, this would send to a backend API
-    const userDataKey = `taskflow.data.${this.userId}`;
-    localStorage.setItem(userDataKey, JSON.stringify(data));
-    console.log('User data saved locally for', this.userId);
+    try {
+      // Add metadata
+      const dataWithMeta = {
+        ...data,
+        userId: this.userId,
+        lastUpdated: new Date().toISOString(),
+        version: "2.0"
+      };
+
+      // Find existing gist or create new one
+      let gistId = await this.findUserGist();
+      
+      if (!gistId) {
+        gistId = await this.createUserGist(dataWithMeta);
+      } else {
+        // Update existing gist
+        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `token ${this.masterToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            files: {
+              'taskflow-data.json': {
+                content: JSON.stringify(dataWithMeta, null, 2)
+              }
+            }
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to update gist: ${response.status}`);
+        }
+      }
+
+      console.log('User data saved to gist for', this.userId);
+      
+      // Also save locally as backup
+      const userDataKey = `taskflow.data.${this.userId}`;
+      localStorage.setItem(userDataKey, JSON.stringify(dataWithMeta));
+      
+    } catch (error) {
+      console.error('Error saving to gist, using localStorage:', error);
+      // Fallback to localStorage
+      const userDataKey = `taskflow.data.${this.userId}`;
+      localStorage.setItem(userDataKey, JSON.stringify(data));
+    }
   }
 
   async loadUserData() {
     try {
-      // Try to load from our static JSON file first
-      const response = await fetch(this.userDataFile);
-      if (response.ok) {
-        return await response.json();
+      // Try to load from static JSON file first (for initial data)
+      const staticResponse = await fetch(`${DB_CONFIG.dataPath}${this.userId}.json`);
+      if (staticResponse.ok) {
+        const staticData = await staticResponse.json();
+        console.log('Loaded initial data from static file');
+        return staticData;
       }
     } catch (error) {
-      console.log('No static data file found, checking localStorage');
+      console.log('No static data file found');
+    }
+
+    try {
+      // Try to load from gist
+      const gistId = await this.findUserGist();
+      
+      if (gistId) {
+        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+          headers: {
+            'Authorization': `token ${this.masterToken}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (response.ok) {
+          const gist = await response.json();
+          const content = gist.files['taskflow-data.json'].content;
+          const data = JSON.parse(content);
+          console.log('Loaded data from gist for', this.userId);
+          
+          // Save to localStorage as cache
+          const userDataKey = `taskflow.data.${this.userId}`;
+          localStorage.setItem(userDataKey, JSON.stringify(data));
+          
+          return data;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading from gist:', error);
     }
 
     // Fallback to localStorage
+    console.log('Falling back to localStorage');
     const userDataKey = `taskflow.data.${this.userId}`;
     const saved = localStorage.getItem(userDataKey);
     return saved ? JSON.parse(saved) : null;
@@ -966,7 +1105,7 @@ function DailyTasksDashboard({ user, onLogout }) {
   // Cloud sync states
   const [cloudSync, setCloudSync] = useState(true); // Auto-enable for logged-in users
   const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "error"
-  const [simpleDB] = useState(() => new SimpleDB(user.userId));
+  const [gistDB] = useState(() => new GistDB(user.userId));
 
   useEffect(() => {
     // Don't save default tasks on first load
@@ -1022,7 +1161,7 @@ function DailyTasksDashboard({ user, onLogout }) {
         version: "2.0"
       };
       
-      await simpleDB.saveUserData(data);
+      await gistDB.saveUserData(data);
       setSyncStatus("synced");
       setTimeout(() => setSyncStatus(""), 3000);
     } catch (error) {
@@ -1035,7 +1174,7 @@ function DailyTasksDashboard({ user, onLogout }) {
   const loadFromCloud = async () => {
     try {
       setSyncStatus("syncing");
-      const data = await simpleDB.loadUserData();
+      const data = await gistDB.loadUserData();
       
       if (data) {
         if (data.tasks) setTasks(data.tasks);
