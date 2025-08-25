@@ -38,8 +38,8 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recha
 
 // ---------- Simple Database Configuration ----------
 const DB_CONFIG = {
-  usersFile: '/db/users.json',
-  dataPath: '/db/data/'
+  usersFile: '/taskflow/db/users.json',
+  dataPath: '/taskflow/db/data/'
 };
 
 // ---------- Simple Database Functions ----------
