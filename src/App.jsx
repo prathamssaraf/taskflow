@@ -27,9 +27,6 @@ import {
   Upload,
   Download,
   FileText,
-  Cloud,
-  CloudOff,
-  Wifi,
   User,
   Lock,
   UserPlus,
@@ -42,74 +39,12 @@ const DB_CONFIG = {
   dataPath: '/taskflow/db/data/'
 };
 
-// ---------- GitHub Gist Database Functions ----------
-class GistDB {
+// ---------- Simple Cross-Device Database ----------
+class CrossDeviceDB {
   constructor(userId) {
     this.userId = userId;
-    this.gistId = null;
-    this.masterToken = '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'; // Your master token
-  }
-
-  async findUserGist() {
-    try {
-      // Search for existing gist for this user
-      const response = await fetch('https://api.github.com/gists', {
-        headers: {
-          'Authorization': `token ${this.masterToken}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
-
-      if (response.ok) {
-        const gists = await response.json();
-        const userGist = gists.find(gist => 
-          gist.description === `TaskFlow data for ${this.userId}`
-        );
-        
-        if (userGist) {
-          this.gistId = userGist.id;
-          return userGist.id;
-        }
-      }
-      return null;
-    } catch (error) {
-      console.error('Error finding user gist:', error);
-      return null;
-    }
-  }
-
-  async createUserGist(data) {
-    try {
-      const response = await fetch('https://api.github.com/gists', {
-        method: 'POST',
-        headers: {
-          'Authorization': `token ${this.masterToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          description: `TaskFlow data for ${this.userId}`,
-          public: false,
-          files: {
-            'taskflow-data.json': {
-              content: JSON.stringify(data, null, 2)
-            }
-          }
-        })
-      });
-
-      if (response.ok) {
-        const gist = await response.json();
-        this.gistId = gist.id;
-        console.log('Created new gist for user:', this.userId);
-        return gist.id;
-      } else {
-        throw new Error(`Failed to create gist: ${response.status}`);
-      }
-    } catch (error) {
-      console.error('Error creating user gist:', error);
-      throw error;
-    }
+    this.storageKey = `taskflow.${userId}`;
+    this.dataFile = `/taskflow/db/data/${userId}.json`;
   }
 
   async saveUserData(data) {
@@ -122,95 +57,144 @@ class GistDB {
         version: "2.0"
       };
 
-      // Find existing gist or create new one
-      let gistId = await this.findUserGist();
-      
-      if (!gistId) {
-        gistId = await this.createUserGist(dataWithMeta);
-      } else {
-        // Update existing gist
-        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `token ${this.masterToken}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            files: {
-              'taskflow-data.json': {
-                content: JSON.stringify(dataWithMeta, null, 2)
-              }
-            }
-          })
-        });
+      // Save to localStorage
+      localStorage.setItem(this.storageKey, JSON.stringify(dataWithMeta));
+      console.log('User data saved locally for', this.userId, '- Use export/import for cross-device sync');
 
-        if (!response.ok) {
-          throw new Error(`Failed to update gist: ${response.status}`);
-        }
-      }
+      // Also save to sessionStorage for cross-tab sync within same browser
+      sessionStorage.setItem(this.storageKey, JSON.stringify(dataWithMeta));
 
-      console.log('User data saved to gist for', this.userId);
-      
-      // Also save locally as backup
-      const userDataKey = `taskflow.data.${this.userId}`;
-      localStorage.setItem(userDataKey, JSON.stringify(dataWithMeta));
-      
+      return dataWithMeta;
     } catch (error) {
-      console.error('Error saving to gist, using localStorage:', error);
-      // Fallback to localStorage
-      const userDataKey = `taskflow.data.${this.userId}`;
-      localStorage.setItem(userDataKey, JSON.stringify(data));
+      console.error('Error saving user data:', error);
+      throw error;
     }
   }
 
   async loadUserData() {
     try {
-      // Try to load from static JSON file first (for initial data)
-      const staticResponse = await fetch(`${DB_CONFIG.dataPath}${this.userId}.json`);
+      // Try to load from static JSON file first (cross-device data)
+      const staticResponse = await fetch(this.dataFile);
       if (staticResponse.ok) {
         const staticData = await staticResponse.json();
-        console.log('Loaded initial data from static file');
+        
+        // Check if server data is newer than local data
+        const localData = localStorage.getItem(this.storageKey);
+        if (localData) {
+          const localParsed = JSON.parse(localData);
+          const serverTime = new Date(staticData.lastUpdated || 0).getTime();
+          const localTime = new Date(localParsed.lastUpdated || 0).getTime();
+          
+          if (localTime > serverTime) {
+            console.log('Local data is newer for', this.userId);
+            return localParsed;
+          }
+        }
+        
+        console.log('Loaded cross-device data from server for', this.userId);
+        localStorage.setItem(this.storageKey, JSON.stringify(staticData));
         return staticData;
       }
     } catch (error) {
-      console.log('No static data file found');
+      console.log('No cross-device data found for', this.userId);
     }
 
+    // Load from localStorage
     try {
-      // Try to load from gist
-      const gistId = await this.findUserGist();
-      
-      if (gistId) {
-        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-          headers: {
-            'Authorization': `token ${this.masterToken}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        });
-
-        if (response.ok) {
-          const gist = await response.json();
-          const content = gist.files['taskflow-data.json'].content;
-          const data = JSON.parse(content);
-          console.log('Loaded data from gist for', this.userId);
-          
-          // Save to localStorage as cache
-          const userDataKey = `taskflow.data.${this.userId}`;
-          localStorage.setItem(userDataKey, JSON.stringify(data));
-          
-          return data;
-        }
+      const saved = localStorage.getItem(this.storageKey);
+      if (saved) {
+        const data = JSON.parse(saved);
+        console.log('Loaded data from localStorage for', this.userId);
+        return data;
       }
     } catch (error) {
-      console.error('Error loading from gist:', error);
+      console.error('Error loading from localStorage:', error);
     }
 
-    // Fallback to localStorage
-    console.log('Falling back to localStorage');
-    const userDataKey = `taskflow.data.${this.userId}`;
-    const saved = localStorage.getItem(userDataKey);
-    return saved ? JSON.parse(saved) : null;
+    // Return default data
+    return {
+      tasks: [],
+      name: "",
+      profilePicture: "",
+      userId: this.userId,
+      lastUpdated: new Date().toISOString(),
+      version: "2.0"
+    };
+  }
+
+  // Check if cross-device sync is available
+  hasCrossDeviceData() {
+    return fetch(this.dataFile, {method: 'HEAD'})
+      .then(response => response.ok)
+      .catch(() => false);
+  }
+
+  // Get sync status and instructions
+  getSyncStatus() {
+    return {
+      crossDeviceAvailable: false, // Will be true once user data is in GitHub
+      instructions: [
+        "To sync data across devices:",
+        "1. Click 'Export Data' to download your data file",
+        "2. Create a GitHub issue in the TaskFlow repository",
+        "3. Attach your data file and request sync",
+        "4. Your data will be added to the repository for cross-device access"
+      ]
+    };
+  }
+
+  // Export data for manual cross-device sync
+  exportUserData() {
+    try {
+      const saved = localStorage.getItem(this.storageKey);
+      if (saved) {
+        const data = JSON.parse(saved);
+        const exportData = {
+          ...data,
+          exportedAt: new Date().toISOString(),
+          exportedFrom: navigator.userAgent.substring(0, 50),
+          syncInstructions: this.getSyncStatus().instructions
+        };
+        
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+        
+        const exportFileDefaultName = `taskflow-${this.userId}-${new Date().toISOString().slice(0, 10)}.json`;
+        
+        const linkElement = document.createElement('a');
+        linkElement.setAttribute('href', dataUri);
+        linkElement.setAttribute('download', exportFileDefaultName);
+        linkElement.click();
+        
+        console.log('Data exported for', this.userId);
+        return true;
+      }
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      return false;
+    }
+  }
+
+  // Import data for manual cross-device sync
+  importUserData(jsonData) {
+    try {
+      // Validate and save imported data
+      if (jsonData.userId === this.userId) {
+        // Update timestamp to mark as most recent
+        jsonData.lastUpdated = new Date().toISOString();
+        jsonData.importedAt = new Date().toISOString();
+        
+        localStorage.setItem(this.storageKey, JSON.stringify(jsonData));
+        sessionStorage.setItem(this.storageKey, JSON.stringify(jsonData));
+        console.log('Data imported for', this.userId);
+        return jsonData;
+      } else {
+        throw new Error('Data belongs to different user');
+      }
+    } catch (error) {
+      console.error('Error importing data:', error);
+      throw error;
+    }
   }
 }
 
@@ -1102,10 +1086,8 @@ function DailyTasksDashboard({ user, onLogout }) {
     }
   });
   
-  // Cloud sync states
-  const [cloudSync, setCloudSync] = useState(true); // Auto-enable for logged-in users
-  const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "error"
-  const [gistDB] = useState(() => new GistDB(user.userId));
+  // Sync status for UI feedback (no longer used for cloud sync)
+  const [crossDeviceDB] = useState(() => new CrossDeviceDB(user.userId));
 
   useEffect(() => {
     // Don't save default tasks on first load
@@ -1147,79 +1129,10 @@ function DailyTasksDashboard({ user, onLogout }) {
     }
   }, [profilePicture, userPictureKey]);
 
-  // Cloud sync functions
-  const syncToCloud = async () => {
-    if (!cloudSync) return;
-    
-    try {
-      setSyncStatus("syncing");
-      const data = {
-        tasks,
-        name,
-        profilePicture,
-        lastSync: new Date().toISOString(),
-        version: "2.0"
-      };
-      
-      await gistDB.saveUserData(data);
-      setSyncStatus("synced");
-      setTimeout(() => setSyncStatus(""), 3000);
-    } catch (error) {
-      console.error("Cloud sync failed:", error);
-      setSyncStatus("error");
-      setTimeout(() => setSyncStatus(""), 5000);
-    }
-  };
-
-  const loadFromCloud = async () => {
-    try {
-      setSyncStatus("syncing");
-      const data = await gistDB.loadUserData();
-      
-      if (data) {
-        if (data.tasks) setTasks(data.tasks);
-        if (data.name) setName(data.name);
-        if (data.profilePicture) setProfilePicture(data.profilePicture);
-        setSyncStatus("synced");
-        setTimeout(() => setSyncStatus(""), 3000);
-      } else {
-        setSyncStatus("error");
-        setTimeout(() => setSyncStatus(""), 3000);
-      }
-    } catch (error) {
-      console.error("Cloud load failed:", error);
-      setSyncStatus("error");
-      setTimeout(() => setSyncStatus(""), 5000);
-    }
-  };
-
-  // Auto-sync when cloud sync is enabled
-  useEffect(() => {
-    if (cloudSync && tasks !== defaultTasks) {
-      const syncTimer = setTimeout(syncToCloud, 2000);
-      return () => clearTimeout(syncTimer);
-    }
-  }, [tasks, name, profilePicture, cloudSync]);
 
   // Data export/import functions
   const exportData = () => {
-    const data = {
-      tasks,
-      name,
-      profilePicture,
-      exportDate: new Date().toISOString(),
-      version: "1.0"
-    };
-    
-    const dataStr = JSON.stringify(data, null, 2);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    
-    const exportFileDefaultName = `taskflow-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    crossDeviceDB.exportUserData();
   };
 
   const importData = (event) => {
@@ -1230,14 +1143,18 @@ function DailyTasksDashboard({ user, onLogout }) {
         try {
           const importedData = JSON.parse(e.target.result);
           
-          if (importedData.tasks) setTasks(importedData.tasks);
-          if (importedData.name) setName(importedData.name);
-          if (importedData.profilePicture) setProfilePicture(importedData.profilePicture);
+          // Use the CrossDeviceDB to import data
+          const validatedData = crossDeviceDB.importUserData(importedData);
           
-          alert("Data imported successfully!");
+          // Update the UI state
+          if (validatedData.tasks) setTasks(validatedData.tasks);
+          if (validatedData.name) setName(validatedData.name);
+          if (validatedData.profilePicture) setProfilePicture(validatedData.profilePicture);
+          
+          alert("Data imported successfully! Your data is now synced.");
         } catch (error) {
           console.error("Error importing data:", error);
-          alert("Error importing data. Please check the file format.");
+          alert("Error importing data: " + error.message);
         }
       };
       reader.readAsText(file);
@@ -1472,27 +1389,20 @@ function DailyTasksDashboard({ user, onLogout }) {
                 <p className="text-sm text-slate-400">@{user.username} - Plan your day and track progress.</p>
               </div>
               <div className="flex items-center gap-3">
-                {(saveStatus || syncStatus) && (
+                {saveStatus && (
                   <div className={clsx(
                     "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium",
-                    (saveStatus === "saving" || syncStatus === "syncing") && "bg-blue-50 text-blue-600",
-                    (saveStatus === "saved" || syncStatus === "synced") && "bg-green-50 text-green-600",
-                    (saveStatus === "error" || syncStatus === "error") && "bg-red-50 text-red-600"
+                    saveStatus === "saving" && "bg-blue-50 text-blue-600",
+                    saveStatus === "saved" && "bg-green-50 text-green-600",
+                    saveStatus === "error" && "bg-red-50 text-red-600"
                   )}>
-                    {(saveStatus === "saving" || syncStatus === "syncing") && (
-                      syncStatus === "syncing" ? <Cloud className="w-3 h-3 animate-pulse" /> : <Save className="w-3 h-3 animate-spin" />
-                    )}
-                    {(saveStatus === "saved" || syncStatus === "synced") && (
-                      syncStatus === "synced" ? <Cloud className="w-3 h-3" /> : <Check className="w-3 h-3" />
-                    )}
-                    {(saveStatus === "error" || syncStatus === "error") && <CloudOff className="w-3 h-3" />}
+                    {saveStatus === "saving" && <Save className="w-3 h-3 animate-spin" />}
+                    {saveStatus === "saved" && <Check className="w-3 h-3" />}
+                    {saveStatus === "error" && <X className="w-3 h-3" />}
                     <span>
-                      {syncStatus === "syncing" && "Syncing to cloud..."}
-                      {syncStatus === "synced" && "Synced to cloud"}
-                      {syncStatus === "error" && "Cloud sync failed"}
-                      {!syncStatus && saveStatus === "saving" && "Saving locally..."}
-                      {!syncStatus && saveStatus === "saved" && "Saved locally"}
-                      {!syncStatus && saveStatus === "error" && "Save failed"}
+                      {saveStatus === "saving" && "Saving locally..."}
+                      {saveStatus === "saved" && "Saved locally"}
+                      {saveStatus === "error" && "Save failed"}
                     </span>
                   </div>
                 )}
@@ -1614,67 +1524,63 @@ function DailyTasksDashboard({ user, onLogout }) {
             </div>
           </div>
 
-          {/* Cloud Sync */}
+          {/* Cross-Device Sync */}
           <div className="border-t pt-4">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2">GitHub Cloud Sync</h4>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Cross-Device Sync</h4>
             <div className="space-y-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input 
-                  type="checkbox" 
-                  checked={cloudSync}
-                  onChange={(e) => setCloudSync(e.target.checked)}
-                />
-                Enable automatic cloud sync
-              </label>
+              <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg">
+                <strong>📱 Manual Sync:</strong> Use export/import to sync data across devices
+              </div>
               
-              <div className="text-xs text-green-600 bg-green-50 p-2 rounded-lg">
-                <strong>✅ Connected:</strong> Using your GitHub token from registration
+              <div className="text-xs text-slate-500 space-y-1">
+                <div>• Export your data on one device</div>
+                <div>• Import the file on your other device</div>
+                <div>• Data includes tasks, settings, and profile</div>
               </div>
               
               <div className="flex gap-2">
                 <button 
-                  onClick={loadFromCloud}
+                  onClick={exportData}
                   className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
                 >
-                  <Cloud className="w-4 h-4" />
-                  Load from Cloud
+                  <Download className="w-4 h-4" />
+                  Export Data
                 </button>
-                <button 
-                  onClick={syncToCloud}
-                  className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 text-sm font-medium"
-                >
-                  <Wifi className="w-4 h-4" />
-                  Sync Now
-                </button>
+                <label className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 cursor-pointer text-sm font-medium">
+                  <Upload className="w-4 h-4" />
+                  Import Data
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={importData}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
           </div>
 
           {/* Data Management */}
           <div className="border-t pt-4">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2">Local Data Management</h4>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Data Management</h4>
             <div className="space-y-2">
               <button 
-                onClick={exportData}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium"
+                onClick={() => {
+                  const confirmed = confirm('This will clear all your local data. Make sure you have exported your data first. Continue?');
+                  if (confirmed) {
+                    localStorage.removeItem(`taskflow.${user.userId}`);
+                    sessionStorage.removeItem(`taskflow.${user.userId}`);
+                    window.location.reload();
+                  }
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium"
               >
-                <Download className="w-4 h-4" />
-                Export All Data
+                <Trash2 className="w-4 h-4" />
+                Clear All Local Data
               </button>
               
-              <label className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 cursor-pointer text-sm font-medium">
-                <Upload className="w-4 h-4" />
-                Import Data
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={importData}
-                  className="hidden"
-                />
-              </label>
-              
               <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">
-                <strong>💡 Tip:</strong> Cloud sync stores data in your GitHub repo automatically. Use export/import as backup.
+                <strong>💡 Tip:</strong> Export your data regularly to keep backups and sync across devices.
               </div>
             </div>
           </div>
@@ -1689,8 +1595,8 @@ function DailyTasksDashboard({ user, onLogout }) {
               <div>Profile name: {name}</div>
               <div>Profile picture: {profilePicture ? "Custom" : "Default"}</div>
               <div>Local storage: ✓ Active</div>
-              <div>Cloud sync: {cloudSync ? "✓ Enabled" : "✗ Disabled"}</div>
-              {cloudSync && <div>GitHub repo: prathamssaraf/taskflow</div>}
+              <div>Cross-device sync: Manual (export/import)</div>
+              <div>Data version: 2.0</div>
             </div>
           </div>
         </div>
